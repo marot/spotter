@@ -10,6 +10,7 @@ defmodule SpotterWeb.TerminalChannel do
   require Logger
 
   alias Spotter.Services.Tmux
+  alias Spotter.Services.TmuxOutput
 
   @impl true
   def join("terminal:debug", _params, socket) do
@@ -23,7 +24,7 @@ defmodule SpotterWeb.TerminalChannel do
 
       initial_content =
         case Tmux.capture_pane(pane_id) do
-          {:ok, content} -> content
+          {:ok, content} -> TmuxOutput.prepare_for_xterm(content)
           _ -> ""
         end
 

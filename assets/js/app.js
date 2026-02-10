@@ -2,6 +2,7 @@ import "phoenix_html"
 import { Socket } from "phoenix"
 import { LiveSocket } from "phoenix_live_view"
 import { Terminal } from "@xterm/xterm"
+import { FitAddon } from "@xterm/addon-fit"
 import { WebLinksAddon } from "@xterm/addon-web-links"
 
 const Hooks = {}
@@ -9,15 +10,11 @@ const Hooks = {}
 Hooks.Terminal = {
   mounted() {
     const paneId = this.el.dataset.paneId
-    const cols = parseInt(this.el.dataset.cols) || 80
-    const rows = parseInt(this.el.dataset.rows) || 24
 
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      cols,
-      rows,
       scrollback: 10000,
       theme: {
         background: "#1a1a2e",
@@ -26,15 +23,22 @@ Hooks.Terminal = {
       },
     })
 
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon())
 
     // Wait for fonts to load so xterm.js measures character width correctly
     document.fonts.ready.then(() => {
       term.open(this.el)
+      fitAddon.fit()
       this._connectChannel(term, paneId)
     })
 
     this._term = term
+    this._fitAddon = fitAddon
+
+    this._onResize = () => fitAddon.fit()
+    window.addEventListener("resize", this._onResize)
   },
 
   _connectChannel(term, paneId) {
@@ -66,6 +70,7 @@ Hooks.Terminal = {
   },
 
   destroyed() {
+    window.removeEventListener("resize", this._onResize)
     if (this._channel) this._channel.leave()
     if (this._socket) this._socket.disconnect()
     if (this._term) this._term.dispose()

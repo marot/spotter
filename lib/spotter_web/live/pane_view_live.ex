@@ -6,20 +6,7 @@ defmodule SpotterWeb.PaneViewLive do
   @impl true
   def mount(%{"pane_id" => pane_num}, _session, socket) do
     pane_id = Tmux.num_to_pane_id(pane_num)
-
-    {cols, rows} =
-      case Tmux.list_panes() do
-        {:ok, panes} ->
-          case Enum.find(panes, &(&1.pane_id == pane_id)) do
-            %{pane_width: w, pane_height: h} -> {w, h}
-            _ -> {80, 24}
-          end
-
-        _ ->
-          {80, 24}
-      end
-
-    {:ok, assign(socket, pane_id: pane_id, cols: cols, rows: rows)}
+    {:ok, assign(socket, pane_id: pane_id)}
   end
 
   @impl true
@@ -27,10 +14,10 @@ defmodule SpotterWeb.PaneViewLive do
     ~H"""
     <div class="header">
       <a href="/">&larr; Back</a>
-      <span>Pane: {@pane_id} ({@cols}x{@rows})</span>
+      <span>Pane: {@pane_id}</span>
     </div>
-    <div style="display: flex; justify-content: center; align-items: flex-start; padding: 2rem;">
-      <div style="border-radius: 8px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333;">
+    <div style="display: flex; flex-direction: column; height: calc(100vh - 40px); padding: 0.5rem;">
+      <div style="flex: 1; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.5); border: 1px solid #333; display: flex; flex-direction: column;">
         <div style="background: #2d2d3f; padding: 8px 12px; display: flex; align-items: center; gap: 8px;">
           <span style="width: 12px; height: 12px; border-radius: 50%; background: #ff5f56; display: inline-block;"></span>
           <span style="width: 12px; height: 12px; border-radius: 50%; background: #ffbd2e; display: inline-block;"></span>
@@ -41,10 +28,8 @@ defmodule SpotterWeb.PaneViewLive do
           id="terminal"
           phx-hook="Terminal"
           data-pane-id={@pane_id}
-          data-cols={@cols}
-          data-rows={@rows}
           phx-update="ignore"
-          style="padding: 4px;"
+          style="flex: 1; padding: 4px;"
         >
         </div>
       </div>
