@@ -39,9 +39,10 @@ defmodule Spotter.MixProject do
       {:ash_phoenix, "~> 2.0"},
       {:ash, "~> 3.0"},
       {:bandit, "~> 1.0", only: [:dev]},
-      {:igniter, "~> 0.6", only: [:dev, :test]}
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      {:igniter, "~> 0.6", only: [:dev, :test]},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -72,7 +73,10 @@ defmodule Spotter.MixProject do
   end
 
   defp aliases() do
-    [test: ["ash.setup --quiet", "test"]]
+    [
+      test: ["ash.setup --quiet", "test"],
+      quality: ["credo", "dialyzer", "deps.audit"]
+    ]
   end
 
   defp elixirc_paths(:test),
