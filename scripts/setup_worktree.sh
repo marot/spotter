@@ -84,6 +84,8 @@ echo "==> Fetching dev dependencies..."
 mix deps.get
 echo "==> Fetching test dependencies..."
 MIX_ENV=test mix deps.get
+echo "==> Installing JS dependencies..."
+npm install --prefix assets
 echo "==> Running migrations..."
 mix ecto.migrate
 

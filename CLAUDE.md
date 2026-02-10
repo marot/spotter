@@ -29,6 +29,9 @@ git gtr clean --merged
 
 # Agent Instructions
 
+- Do not ignore credo lintings. Fix them.
+- If commiting on a branch, always push to remote too.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference
