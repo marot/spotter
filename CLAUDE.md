@@ -1,3 +1,11 @@
+# Product
+Spotter helps to review Claude Code sessions and generated code. 
+
+# Architecture
+Ash, Phoenix, LiveView, xterm.js, tmux
+
+The prototype runs on localhost, and has no authentication.
+
 # Agent Instructions
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
