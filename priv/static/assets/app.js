@@ -17819,6 +17819,7 @@ ${h.join(`
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
             cols,
             rows,
+            scrollback: 1e4,
             theme: {
               background: "#1a1a2e",
               foreground: "#e0e0e0",
@@ -17826,7 +17827,13 @@ ${h.join(`
             }
           });
           term.loadAddon(new L2());
-          term.open(this.el);
+          document.fonts.ready.then(() => {
+            term.open(this.el);
+            this._connectChannel(term, paneId);
+          });
+          this._term = term;
+        },
+        _connectChannel(term, paneId) {
           const socket = new import_phoenix.Socket("/socket", {});
           socket.connect();
           const channel = socket.channel(`terminal:${paneId}`, {});
@@ -17845,7 +17852,6 @@ ${h.join(`
           term.onData((data) => {
             channel.push("input", { data });
           });
-          this._term = term;
           this._channel = channel;
           this._socket = socket;
         },

@@ -3,39 +3,39 @@ defmodule Spotter.Transcripts.ResourcesTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
+  alias Spotter.Transcripts.{Message, Project, Session, Subagent}
 
   setup do
-    # Reset DB for each test
     Sandbox.checkout(Repo)
   end
 
   describe "Project" do
     test "creates and reads a project" do
-      project = Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test"})
+      project = Ash.create!(Project, %{name: "test", pattern: "^test"})
 
       assert project.name == "test"
       assert project.pattern == "^test"
       assert project.id != nil
 
-      projects = Ash.read!(Spotter.Transcripts.Project)
+      projects = Ash.read!(Project)
       assert length(projects) == 1
     end
 
     test "enforces unique name" do
-      Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test"})
+      Ash.create!(Project, %{name: "test", pattern: "^test"})
 
       assert_raise Ash.Error.Invalid, fn ->
-        Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test2"})
+        Ash.create!(Project, %{name: "test", pattern: "^test2"})
       end
     end
   end
 
   describe "Session" do
     test "creates session with project" do
-      project = Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test"})
+      project = Ash.create!(Project, %{name: "test", pattern: "^test"})
 
       session =
-        Ash.create!(Spotter.Transcripts.Session, %{
+        Ash.create!(Session, %{
           session_id: Ash.UUID.generate(),
           transcript_dir: "test-dir",
           project_id: project.id
@@ -48,17 +48,17 @@ defmodule Spotter.Transcripts.ResourcesTest do
 
   describe "Message" do
     test "creates message with session" do
-      project = Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test"})
+      project = Ash.create!(Project, %{name: "test", pattern: "^test"})
 
       session =
-        Ash.create!(Spotter.Transcripts.Session, %{
+        Ash.create!(Session, %{
           session_id: Ash.UUID.generate(),
           transcript_dir: "test-dir",
           project_id: project.id
         })
 
       message =
-        Ash.create!(Spotter.Transcripts.Message, %{
+        Ash.create!(Message, %{
           uuid: "msg-1",
           type: :user,
           role: :user,
@@ -74,17 +74,17 @@ defmodule Spotter.Transcripts.ResourcesTest do
 
   describe "Subagent" do
     test "creates subagent with session" do
-      project = Ash.create!(Spotter.Transcripts.Project, %{name: "test", pattern: "^test"})
+      project = Ash.create!(Project, %{name: "test", pattern: "^test"})
 
       session =
-        Ash.create!(Spotter.Transcripts.Session, %{
+        Ash.create!(Session, %{
           session_id: Ash.UUID.generate(),
           transcript_dir: "test-dir",
           project_id: project.id
         })
 
       subagent =
-        Ash.create!(Spotter.Transcripts.Subagent, %{
+        Ash.create!(Subagent, %{
           agent_id: "abc123",
           session_id: session.id
         })

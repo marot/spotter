@@ -12,6 +12,11 @@ defmodule SpotterWeb.TerminalChannel do
   alias Spotter.Services.Tmux
 
   @impl true
+  def join("terminal:debug", _params, socket) do
+    send(self(), :start_debug_shell)
+    {:ok, %{initial_content: ""}, assign(socket, :mode, :debug)}
+  end
+
   def join("terminal:" <> pane_id, _params, socket) do
     if Tmux.pane_exists?(pane_id) do
       send(self(), :start_streaming)
@@ -22,13 +27,34 @@ defmodule SpotterWeb.TerminalChannel do
           _ -> ""
         end
 
-      {:ok, %{initial_content: initial_content}, assign(socket, :pane_id, pane_id)}
+      {:ok, %{initial_content: initial_content}, assign(socket, pane_id: pane_id, mode: :tmux)}
     else
       {:error, %{reason: "pane not found"}}
     end
   end
 
   @impl true
+  def handle_info(:start_debug_shell, socket) do
+    shell = System.find_executable("bash") || System.find_executable("sh")
+
+    port =
+      Port.open(
+        {:spawn_executable, System.find_executable("script")},
+        [
+          :binary,
+          :exit_status,
+          args: ["-q", "-c", shell, "/dev/null"],
+          env: [
+            {~c"TERM", ~c"xterm-256color"},
+            {~c"COLUMNS", ~c"80"},
+            {~c"LINES", ~c"24"}
+          ]
+        ]
+      )
+
+    {:noreply, assign(socket, :port, port)}
+  end
+
   def handle_info(:start_streaming, socket) do
     pane_id = socket.assigns.pane_id
 
@@ -42,14 +68,21 @@ defmodule SpotterWeb.TerminalChannel do
         ]
       )
 
-    {:noreply, assign(socket, :port, port)}
+    {:noreply, assign(socket, port: port, buffer: "")}
+  end
+
+  def handle_info({port, {:data, data}}, %{assigns: %{port: port, mode: :debug}} = socket) do
+    push(socket, "output", %{data: data})
+    {:noreply, socket}
   end
 
   def handle_info({port, {:data, data}}, %{assigns: %{port: port}} = socket) do
+    # Port data arrives in arbitrary chunks - buffer incomplete lines
+    buffered = socket.assigns.buffer <> data
+    {lines, remaining} = split_complete_lines(buffered)
+
     # tmux control mode outputs lines like %output %<pane_id> <data>
-    data
-    |> String.split("\n")
-    |> Enum.each(fn line ->
+    Enum.each(lines, fn line ->
       case parse_control_line(line) do
         {:output, _target_pane, content} ->
           push(socket, "output", %{data: decode_output(content)})
@@ -59,7 +92,15 @@ defmodule SpotterWeb.TerminalChannel do
       end
     end)
 
-    {:noreply, socket}
+    {:noreply, assign(socket, :buffer, remaining)}
+  end
+
+  def handle_info(
+        {port, {:exit_status, _status}},
+        %{assigns: %{port: port, mode: :debug}} = socket
+      ) do
+    Logger.info("Debug shell exited")
+    {:stop, :normal, socket}
   end
 
   def handle_info({port, {:exit_status, _status}}, %{assigns: %{port: port}} = socket) do
@@ -72,8 +113,18 @@ defmodule SpotterWeb.TerminalChannel do
   end
 
   @impl true
+  def handle_in("input", %{"data" => data}, %{assigns: %{mode: :debug}} = socket) do
+    Port.command(socket.assigns.port, data)
+    {:noreply, socket}
+  end
+
   def handle_in("input", %{"data" => data}, socket) do
     Tmux.send_keys(socket.assigns.pane_id, data)
+    {:noreply, socket}
+  end
+
+  def handle_in("resize", _params, %{assigns: %{mode: :debug}} = socket) do
+    # PTY resize not supported for debug shell via script
     {:noreply, socket}
   end
 
@@ -111,6 +162,14 @@ defmodule SpotterWeb.TerminalChannel do
     end
   end
 
+  # Split into complete lines (ending with \n) and a remaining partial line
+  defp split_complete_lines(data) do
+    case String.split(data, "\n", trim: false) do
+      [only] -> {[], only}
+      parts -> {Enum.slice(parts, 0..-2//1), List.last(parts)}
+    end
+  end
+
   defp decode_output(str) do
     decoded = decode_octal(str)
 
@@ -121,7 +180,7 @@ defmodule SpotterWeb.TerminalChannel do
 
   defp decode_octal(str) do
     Regex.replace(~r/\\(\d{3})/, str, fn _, octal ->
-      <<String.to_integer(octal, 8)::utf8>>
+      <<String.to_integer(octal, 8)>>
     end)
   end
 end

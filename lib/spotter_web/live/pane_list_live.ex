@@ -104,7 +104,12 @@ defmodule SpotterWeb.PaneListLive do
     <div class="container">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
         <h1>Spotter - Tmux Panes</h1>
-        <button phx-click="refresh">Refresh</button>
+        <div style="display: flex; gap: 0.5rem;">
+          <a href="/debug" style="padding: 0.4rem 0.8rem; background: #2d4a2d; border-radius: 4px; color: #7ec87e; text-decoration: none; font-size: 0.85rem;">
+            Debug Terminal
+          </a>
+          <button phx-click="refresh">Refresh</button>
+        </div>
       </div>
 
       <%!-- Session Transcripts Section --%>

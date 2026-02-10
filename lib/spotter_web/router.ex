@@ -16,6 +16,7 @@ defmodule SpotterWeb.Router do
     pipe_through(:browser)
 
     live("/", PaneListLive)
+    live("/debug", DebugTerminalLive)
     live("/panes/:pane_id", PaneViewLive)
   end
 end

@@ -5,6 +5,12 @@ defmodule SpotterWeb.Endpoint do
     plug(Tidewave, allow_remote_access: true)
   end
 
+  if code_reloading? do
+    socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
+    plug(Phoenix.LiveReloader)
+    plug(Phoenix.CodeReloader)
+  end
+
   socket("/live", Phoenix.LiveView.Socket)
   socket("/socket", SpotterWeb.UserSocket)
 

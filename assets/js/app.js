@@ -27,9 +27,17 @@ Hooks.Terminal = {
     })
 
     term.loadAddon(new WebLinksAddon())
-    term.open(this.el)
 
-    // Connect to terminal channel
+    // Wait for fonts to load so xterm.js measures character width correctly
+    document.fonts.ready.then(() => {
+      term.open(this.el)
+      this._connectChannel(term, paneId)
+    })
+
+    this._term = term
+  },
+
+  _connectChannel(term, paneId) {
     const socket = new Socket("/socket", {})
     socket.connect()
 
@@ -49,12 +57,10 @@ Hooks.Terminal = {
         term.write(`\r\n\x1b[31mError connecting to pane: ${JSON.stringify(resp)}\x1b[0m\r\n`)
       })
 
-    // Forward input to tmux
     term.onData((data) => {
       channel.push("input", { data })
     })
 
-    this._term = term
     this._channel = channel
     this._socket = socket
   },
