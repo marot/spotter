@@ -7,23 +7,76 @@ defmodule Spotter.MixProject do
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      consolidate_protocols: Mix.env() != :dev,
+      aliases: aliases(),
+      elixirc_paths: elixirc_paths(Mix.env()),
+      usage_rules: usage_rules()
     ]
   end
 
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Spotter.Application, []}
     ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:sourceror, "~> 1.8", only: [:dev, :test]},
+      {:oban, "~> 2.0"},
+      {:open_api_spex, "~> 3.0"},
+      {:usage_rules, "~> 1.0", only: [:dev]},
+      {:ash_ai, "~> 0.5"},
+      {:tidewave, "~> 0.5", only: [:dev]},
+      {:oban_web, "~> 2.0"},
+      {:ash_oban, "~> 0.7"},
+      {:ash_sqlite, "~> 0.2"},
+      {:ash_json_api, "~> 1.0"},
+      {:ash_phoenix, "~> 2.0"},
+      {:ash, "~> 3.0"},
       {:igniter, "~> 0.6", only: [:dev, :test]}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
   end
+
+  defp usage_rules do
+    [
+      file: "CLAUDE.md",
+      skills: [
+        location: ".claude/skills",
+        build: [
+          "ash-framework": [
+            description:
+              "Use this skill working with Ash Framework or any of its extensions. Always consult this when making any domain changes, features or fixes.",
+            usage_rules: [:ash, ~r/^ash_/]
+          ],
+          "phoenix-framework": [
+            description:
+              "Use this skill working with Phoenix Framework. Consult this when working with the web layer, controllers, views, liveviews etc.",
+            usage_rules: [:phoenix, ~r/^phoenix_/]
+          ],
+          oban: [
+            description:
+              "Use this skill when working with Oban background jobs, queues, or scheduled work.",
+            usage_rules: [:oban, ~r/^oban_/]
+          ]
+        ]
+      ]
+    ]
+  end
+
+  defp aliases() do
+    [test: ["ash.setup --quiet", "test"]]
+  end
+
+  defp elixirc_paths(:test),
+    do: elixirc_paths(:dev) ++ ["test/support"]
+
+  defp elixirc_paths(_),
+    do: ["lib"]
 end
