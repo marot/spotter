@@ -78,7 +78,7 @@ defmodule SpotterWeb.PaneListLive do
           <td>{pane.window_index}:{pane.pane_index}</td>
           <td>{pane.pane_current_command}</td>
           <td>{pane.pane_width}x{pane.pane_height}</td>
-          <td><a href={"/panes/#{URI.encode(pane.pane_id)}"}>Connect</a></td>
+          <td><a href={"/panes/#{Tmux.pane_id_to_num(pane.pane_id)}"}>Connect</a></td>
         </tr>
       </tbody>
     </table>

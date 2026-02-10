@@ -46,7 +46,7 @@ defmodule SpotterWeb.TerminalChannel do
     |> Enum.each(fn line ->
       case parse_control_line(line) do
         {:output, _target_pane, content} ->
-          push(socket, "output", %{data: decode_octal(content)})
+          push(socket, "output", %{data: decode_output(content)})
 
         _ ->
           :ok
@@ -105,7 +105,14 @@ defmodule SpotterWeb.TerminalChannel do
     end
   end
 
-  # Decode tmux octal-escaped sequences (e.g., \033 -> ESC)
+  defp decode_output(str) do
+    decoded = decode_octal(str)
+
+    if String.valid?(decoded),
+      do: decoded,
+      else: :unicode.characters_to_binary(decoded, :latin1, :utf8)
+  end
+
   defp decode_octal(str) do
     Regex.replace(~r/\\(\d{3})/, str, fn _, octal ->
       <<String.to_integer(octal, 8)::utf8>>

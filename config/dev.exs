@@ -8,6 +8,7 @@ config :spotter, Spotter.Repo,
 config :ash, policies: [show_policy_breakdowns?: true]
 
 config :spotter, SpotterWeb.Endpoint,
+  check_origin: false,
   http: [ip: {0, 0, 0, 0}, port: 1100],
   adapter: Bandit.PhoenixAdapter,
   server: true,

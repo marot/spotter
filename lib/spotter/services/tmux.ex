@@ -96,6 +96,20 @@ defmodule Spotter.Services.Tmux do
     _ -> false
   end
 
+  @doc """
+  Converts a tmux pane ID (e.g. "%16") to its numeric string ("16").
+  """
+  def pane_id_to_num(pane_id) do
+    String.trim_leading(pane_id, "%")
+  end
+
+  @doc """
+  Converts a numeric pane ID string (e.g. "16") to tmux format ("%16").
+  """
+  def num_to_pane_id(num) do
+    "%#{num}"
+  end
+
   # Private helpers
 
   defp pf(field), do: "\#{#{field}}\t"

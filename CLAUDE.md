@@ -34,12 +34,18 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 ## Quick Reference
 
 ```bash
+bd list --status=closed --type=epic # See closed epics (worktrees)
 bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
+
+## Merging a NAME worktree
+Use git rebase NAME
+Afterwards cleanup the branch and worktree (git gtr rm NAME) 
+Cleanup tmux session: tmux kill-session -t spotter-NAME
 
 ## Landing the Plane (Session Completion)
 

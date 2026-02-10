@@ -2,8 +2,8 @@ defmodule SpotterWeb.PaneViewLive do
   use Phoenix.LiveView
 
   @impl true
-  def mount(%{"pane_id" => pane_id}, _session, socket) do
-    pane_id = URI.decode(pane_id)
+  def mount(%{"pane_id" => pane_num}, _session, socket) do
+    pane_id = Spotter.Services.Tmux.num_to_pane_id(pane_num)
     {:ok, assign(socket, pane_id: pane_id)}
   end
 
