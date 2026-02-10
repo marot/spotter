@@ -18,6 +18,7 @@ Hooks.Terminal = {
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       cols,
       rows,
+      scrollback: 10000,
       theme: {
         background: "#1a1a2e",
         foreground: "#e0e0e0",

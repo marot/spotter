@@ -47,10 +47,12 @@ defmodule Spotter.Services.Tmux do
   end
 
   @doc """
-  Captures the current visible content of a pane.
+  Captures the full scrollback history of a pane.
   """
   def capture_pane(pane_id) do
-    case System.cmd("tmux", ["capture-pane", "-t", pane_id, "-p", "-e"], stderr_to_stdout: true) do
+    case System.cmd("tmux", ["capture-pane", "-t", pane_id, "-p", "-e", "-S", "-"],
+           stderr_to_stdout: true
+         ) do
       {output, 0} -> {:ok, output}
       {output, _} -> {:error, String.trim(output)}
     end
