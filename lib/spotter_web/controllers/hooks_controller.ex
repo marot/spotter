@@ -7,6 +7,7 @@ defmodule SpotterWeb.HooksController do
   alias Spotter.Transcripts.Jobs.EnrichCommits
   alias Spotter.Transcripts.Session
   alias Spotter.Transcripts.SessionCommitLink
+  alias Spotter.Transcripts.Sessions
   alias Spotter.Transcripts.ToolCall
 
   require Ash.Query
@@ -67,7 +68,7 @@ defmodule SpotterWeb.HooksController do
 
   def tool_call(conn, %{"session_id" => session_id} = params)
       when is_binary(session_id) do
-    case find_session(session_id) do
+    case Sessions.find_or_create(session_id) do
       {:ok, session} ->
         error_content =
           case params["error_content"] do
@@ -92,8 +93,8 @@ defmodule SpotterWeb.HooksController do
             conn |> put_status(:unprocessable_entity) |> json(%{error: inspect(changeset)})
         end
 
-      {:error, :session_not_found} ->
-        conn |> put_status(:not_found) |> json(%{error: "session not found"})
+      {:error, reason} ->
+        conn |> put_status(:unprocessable_entity) |> json(%{error: inspect(reason)})
     end
   end
 

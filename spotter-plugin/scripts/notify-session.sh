@@ -9,8 +9,9 @@ set -euo pipefail
 # Read the session JSON from stdin
 INPUT="$(cat)"
 
-# Extract session_id from the JSON input
+# Extract fields from the JSON input
 SESSION_ID="$(echo "$INPUT" | jq -r '.session_id // empty')"
+CWD="$(echo "$INPUT" | jq -r '.cwd // empty')"
 
 if [ -z "${SESSION_ID:-}" ] || [ -z "${TMUX_PANE:-}" ]; then
   exit 0
@@ -31,7 +32,7 @@ fi
 curl -s -o /dev/null -X POST \
   "http://127.0.0.1:${PORT}/api/hooks/session-start" \
   -H "Content-Type: application/json" \
-  -d "{\"session_id\": \"${SESSION_ID}\", \"pane_id\": \"${TMUX_PANE}\"}" \
+  -d "{\"session_id\": \"${SESSION_ID}\", \"pane_id\": \"${TMUX_PANE}\", \"cwd\": \"${CWD}\"}" \
   --connect-timeout 2 \
   --max-time 4 \
   2>/dev/null || true

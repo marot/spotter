@@ -74,7 +74,7 @@ defmodule Spotter.Transcripts.Session do
     end
 
     attribute :slug, :string
-    attribute :transcript_dir, :string, allow_nil?: false
+    attribute :transcript_dir, :string
     attribute :cwd, :string
     attribute :git_branch, :string
     attribute :version, :string
