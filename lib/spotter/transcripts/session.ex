@@ -15,7 +15,12 @@ defmodule Spotter.Transcripts.Session do
   end
 
   actions do
-    defaults [:read, :destroy]
+    defaults [:destroy]
+
+    read :read do
+      primary? true
+      pagination keyset?: true, required?: false
+    end
 
     create :create do
       primary? true

@@ -4,10 +4,11 @@ defmodule SpotterWeb.PaneListLive do
   alias Spotter.Services.SessionRegistry
   alias Spotter.Services.Tmux
   alias Spotter.Transcripts.Jobs.SyncTranscripts
-
-  alias Spotter.Transcripts.ToolCall
+  alias Spotter.Transcripts.{Session, ToolCall}
 
   require Ash.Query
+
+  @sessions_per_page 20
 
   @impl true
   def mount(_params, _session, socket) do
@@ -50,6 +51,16 @@ defmodule SpotterWeb.PaneListLive do
     hidden_expanded = socket.assigns.hidden_expanded
     current = Map.get(hidden_expanded, project_id, false)
     {:noreply, assign(socket, hidden_expanded: Map.put(hidden_expanded, project_id, !current))}
+  end
+
+  def handle_event(
+        "load_more_sessions",
+        %{"project-id" => project_id, "visibility" => visibility},
+        socket
+      ) do
+    visibility = String.to_existing_atom(visibility)
+    socket = append_session_page(socket, project_id, visibility)
+    {:noreply, socket}
   end
 
   def handle_event("sync_transcripts", _params, socket) do
@@ -108,11 +119,19 @@ defmodule SpotterWeb.PaneListLive do
   defp load_projects(socket) do
     projects =
       Spotter.Transcripts.Project
-      |> Ash.Query.load(sessions: Ash.Query.sort(Spotter.Transcripts.Session, started_at: :desc))
       |> Ash.read!()
       |> Enum.map(fn project ->
-        {visible, hidden} = Enum.split_with(project.sessions, &is_nil(&1.hidden_at))
-        Map.merge(project, %{visible_sessions: visible, hidden_sessions: hidden})
+        {visible, visible_meta} = load_project_sessions(project.id, :visible)
+        {hidden, hidden_meta} = load_project_sessions(project.id, :hidden)
+
+        Map.merge(project, %{
+          visible_sessions: visible,
+          hidden_sessions: hidden,
+          visible_cursor: visible_meta.next_cursor,
+          visible_has_more: visible_meta.has_more,
+          hidden_cursor: hidden_meta.next_cursor,
+          hidden_has_more: hidden_meta.has_more
+        })
       end)
 
     tool_call_stats = load_tool_call_stats(projects)
@@ -120,24 +139,89 @@ defmodule SpotterWeb.PaneListLive do
     assign(socket, projects: projects, tool_call_stats: tool_call_stats)
   end
 
+  defp append_session_page(socket, project_id, visibility) do
+    project = Enum.find(socket.assigns.projects, &(&1.id == project_id))
+    keys = pagination_keys(visibility)
+
+    if project && Map.get(project, keys.has_more) do
+      do_append_session_page(socket, project, visibility, keys)
+    else
+      socket
+    end
+  end
+
+  defp do_append_session_page(socket, project, visibility, keys) do
+    {new_sessions, meta} =
+      load_project_sessions(project.id, visibility, after: Map.get(project, keys.cursor))
+
+    updated_project =
+      project
+      |> Map.update!(keys.sessions, &(&1 ++ new_sessions))
+      |> Map.put(keys.cursor, meta.next_cursor)
+      |> Map.put(keys.has_more, meta.has_more)
+
+    projects =
+      Enum.map(socket.assigns.projects, fn p ->
+        if p.id == project.id, do: updated_project, else: p
+      end)
+
+    new_stats = load_tool_call_stats_for(Enum.map(new_sessions, & &1.id))
+
+    assign(socket,
+      projects: projects,
+      tool_call_stats: Map.merge(socket.assigns.tool_call_stats, new_stats)
+    )
+  end
+
+  defp pagination_keys(:visible),
+    do: %{cursor: :visible_cursor, has_more: :visible_has_more, sessions: :visible_sessions}
+
+  defp pagination_keys(:hidden),
+    do: %{cursor: :hidden_cursor, has_more: :hidden_has_more, sessions: :hidden_sessions}
+
+  defp load_project_sessions(project_id, visibility, opts \\ []) do
+    cursor = Keyword.get(opts, :after)
+
+    query =
+      Session
+      |> Ash.Query.filter(project_id == ^project_id)
+      |> Ash.Query.sort(started_at: :desc)
+
+    query =
+      case visibility do
+        :visible -> Ash.Query.filter(query, is_nil(hidden_at))
+        :hidden -> Ash.Query.filter(query, not is_nil(hidden_at))
+      end
+
+    page_opts = [keyset?: true, limit: @sessions_per_page]
+    page_opts = if cursor, do: Keyword.put(page_opts, :after, cursor), else: page_opts
+
+    page = query |> Ash.Query.page(page_opts) |> Ash.read!()
+
+    meta = %{has_more: page.more?, next_cursor: page.after}
+    {page.results, meta}
+  end
+
   defp load_tool_call_stats(projects) do
     session_ids =
       projects
-      |> Enum.flat_map(& &1.sessions)
+      |> Enum.flat_map(fn p -> p.visible_sessions ++ p.hidden_sessions end)
       |> Enum.map(& &1.id)
 
-    if session_ids == [] do
-      %{}
-    else
-      ToolCall
-      |> Ash.Query.filter(session_id in ^session_ids)
-      |> Ash.read!()
-      |> Enum.group_by(& &1.session_id)
-      |> Map.new(fn {sid, calls} ->
-        failed = Enum.count(calls, & &1.is_error)
-        {sid, %{total: length(calls), failed: failed}}
-      end)
-    end
+    load_tool_call_stats_for(session_ids)
+  end
+
+  defp load_tool_call_stats_for([]), do: %{}
+
+  defp load_tool_call_stats_for(session_ids) do
+    ToolCall
+    |> Ash.Query.filter(session_id in ^session_ids)
+    |> Ash.read!()
+    |> Enum.group_by(& &1.session_id)
+    |> Map.new(fn {sid, calls} ->
+      failed = Enum.count(calls, & &1.is_error)
+      {sid, %{total: length(calls), failed: failed}}
+    end)
   end
 
   defp relative_time(nil), do: "—"
@@ -245,6 +329,19 @@ defmodule SpotterWeb.PaneListLive do
                     </tr>
                   </tbody>
                 </table>
+                <%= if project.visible_has_more do %>
+                  <div style="text-align: center; margin-top: 0.5rem;">
+                    <button
+                      phx-click="load_more_sessions"
+                      phx-value-project-id={project.id}
+                      phx-value-visibility="visible"
+                      phx-disable-with="Loading..."
+                      style="padding: 0.3rem 0.8rem; background: #1a3a52; border: 1px solid #2a4a6a; border-radius: 4px; color: #64b5f6; cursor: pointer; font-size: 0.8em;"
+                    >
+                      Load more sessions ({length(project.visible_sessions)} shown)
+                    </button>
+                  </div>
+                <% end %>
               <% end %>
 
               <%= if project.hidden_sessions != [] do %>
@@ -302,6 +399,19 @@ defmodule SpotterWeb.PaneListLive do
                         </tr>
                       </tbody>
                     </table>
+                    <%= if project.hidden_has_more do %>
+                      <div style="text-align: center; margin-top: 0.5rem;">
+                        <button
+                          phx-click="load_more_sessions"
+                          phx-value-project-id={project.id}
+                          phx-value-visibility="hidden"
+                          phx-disable-with="Loading..."
+                          style="padding: 0.3rem 0.8rem; background: #1a3a52; border: 1px solid #2a4a6a; border-radius: 4px; color: #64b5f6; cursor: pointer; font-size: 0.8em;"
+                        >
+                          Load more hidden ({length(project.hidden_sessions)} shown)
+                        </button>
+                      </div>
+                    <% end %>
                   <% end %>
                 </div>
               <% end %>
