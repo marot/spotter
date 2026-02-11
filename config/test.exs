@@ -9,8 +9,9 @@ config :spotter, Spotter.Repo,
   pool_size: 10
 
 config :spotter, SpotterWeb.Endpoint,
-  http: [port: 4002],
-  server: false,
-  secret_key_base: String.duplicate("test_secret_key_base_", 4)
+  http: [ip: {127, 0, 0, 1}, port: 4002],
+  secret_key_base:
+    "test-only-secret-base-minimum-64-bytes-long-enough-for-phoenix-token-signing-ok",
+  server: false
 
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true

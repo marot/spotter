@@ -619,6 +619,160 @@ defmodule Spotter.Services.TranscriptRendererTest do
     end
   end
 
+  describe "edge cases" do
+    test "transcript with no tool calls renders cleanly" do
+      messages = [
+        %{
+          type: :assistant,
+          content: %{"blocks" => [%{"type" => "text", "text" => "Hello"}]},
+          uuid: "msg-1"
+        },
+        %{
+          type: :user,
+          content: %{"text" => "Thanks"},
+          uuid: "msg-2"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert result != []
+      assert Enum.all?(result, &(&1.kind in [:text]))
+      assert Enum.all?(result, &is_nil(&1.tool_use_id))
+      assert Enum.all?(result, &is_nil(&1.thread_key))
+    end
+
+    test "malformed code fence does not crash render" do
+      messages = [
+        %{
+          type: :assistant,
+          content: %{
+            "blocks" => [
+              %{"type" => "text", "text" => "```\nsome code\n```not-a-close\nmore text\n```"}
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert is_list(result)
+      assert result != []
+    end
+
+    test "tool_result with list content has correct metadata" do
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_list",
+                "content" => [
+                  %{"type" => "text", "text" => "line one\nline two"}
+                ]
+              }
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert Enum.all?(result, &(&1.kind == :tool_result))
+      assert Enum.all?(result, &(&1.tool_use_id == "toolu_list"))
+      assert Enum.all?(result, &(&1.thread_key == "toolu_list"))
+    end
+
+    test "tool_result with no content renders empty placeholder" do
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [%{"type" => "tool_result", "tool_use_id" => "toolu_empty"}]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert [line] = result
+      assert line.kind == :tool_result
+      assert line.line =~ "(empty)"
+      assert line.tool_use_id == "toolu_empty"
+    end
+
+    test "empty message list returns empty result" do
+      assert TranscriptRenderer.render([]) == []
+    end
+
+    test "mixed content with thinking, text, and tool_use in one message" do
+      messages = [
+        %{
+          type: :assistant,
+          content: %{
+            "blocks" => [
+              %{"type" => "thinking", "thinking" => "Let me reason"},
+              %{"type" => "text", "text" => "Here's my answer"},
+              %{
+                "type" => "tool_use",
+                "name" => "Read",
+                "id" => "toolu_mix",
+                "input" => %{"file_path" => "/tmp/foo.ex"}
+              }
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      kinds = Enum.map(result, & &1.kind)
+      assert :thinking in kinds
+      assert :text in kinds
+      assert :tool_use in kinds
+    end
+  end
+
+  describe "fixture integration with enriched metadata" do
+    test "tool_heavy fixture has tool_use and tool_result kinds" do
+      messages = load_fixture("tool_heavy.jsonl")
+      result = TranscriptRenderer.render(messages)
+
+      kinds = result |> Enum.map(& &1.kind) |> MapSet.new()
+      assert MapSet.member?(kinds, :tool_use)
+      assert MapSet.member?(kinds, :tool_result)
+    end
+
+    test "subagent fixture renders without errors and has enriched keys" do
+      messages = load_fixture("subagent.jsonl")
+      result = TranscriptRenderer.render(messages)
+
+      assert result != []
+
+      for line <- result do
+        assert Map.has_key?(line, :subagent_ref)
+      end
+    end
+
+    test "all fixture lines have required enriched keys" do
+      for fixture <- ["short.jsonl", "tool_heavy.jsonl", "subagent.jsonl"] do
+        messages = load_fixture(fixture)
+        result = TranscriptRenderer.render(messages)
+
+        for line <- result do
+          assert Map.has_key?(line, :kind), "#{fixture}: missing :kind"
+          assert Map.has_key?(line, :tool_use_id), "#{fixture}: missing :tool_use_id"
+          assert Map.has_key?(line, :thread_key), "#{fixture}: missing :thread_key"
+          assert Map.has_key?(line, :subagent_ref), "#{fixture}: missing :subagent_ref"
+          assert Map.has_key?(line, :code_language), "#{fixture}: missing :code_language"
+          assert Map.has_key?(line, :render_mode), "#{fixture}: missing :render_mode"
+          assert line.render_mode in [:plain, :code], "#{fixture}: invalid render_mode"
+        end
+      end
+    end
+  end
+
   defp load_fixture(name) do
     path = Path.join(@fixtures_dir, name)
     {:ok, %{messages: messages}} = JsonlParser.parse_session_file(path)

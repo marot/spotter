@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@xterm/headless": "^6.0.0",
+    "happy-dom": "^20.6.1",
     "vitest": "^4.0.18"
   }
 }
