@@ -98,7 +98,15 @@ if command -v tmux &>/dev/null; then
     echo "==> tmux session '$SESSION_NAME' already exists"
   else
     PLUGIN_DIR="$(realpath "$main_path/spotter-plugin")"
-    tmux new-session -d -s "$SESSION_NAME" -c "$WORKTREE_ROOT" "claude --plugin-dir $PLUGIN_DIR --dangerously-skip-permissions"
+    CLAUDE_CMD="claude --plugin-dir \"$PLUGIN_DIR\" --dangerously-skip-permissions"
+
+    # Auto-instruct Claude if branch is a valid bead ID
+    if command -v bd &>/dev/null && bd show "$BRANCH" --short >/dev/null 2>&1; then
+      CLAUDE_CMD="$CLAUDE_CMD \"Work on bead $BRANCH. Run bd show $BRANCH to see the issue details and bd ready to find available subtasks. Start with the first ready task.\""
+      echo "==> Bead detected: $BRANCH (Claude will auto-start)"
+    fi
+
+    tmux new-session -d -s "$SESSION_NAME" -c "$WORKTREE_ROOT" "$CLAUDE_CMD"
     echo "==> Created tmux session '$SESSION_NAME'"
   fi
 fi
