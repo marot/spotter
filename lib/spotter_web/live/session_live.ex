@@ -19,14 +19,15 @@ defmodule SpotterWeb.SessionLive do
       end
     end
 
-    annotations = load_annotations(session_id)
     {session_record, messages, rendered_lines} = load_transcript(session_id)
+    annotations = load_annotations(session_record)
     errors = load_errors(session_record)
 
     {:ok,
      assign(socket,
        pane_id: pane_id,
        session_id: session_id,
+       session_record: session_record,
        cols: cols,
        rows: rows,
        annotations: annotations,
@@ -90,10 +91,8 @@ defmodule SpotterWeb.SessionLive do
   end
 
   def handle_event("save_annotation", %{"comment" => comment}, socket) do
-    session_id = socket.assigns.session_id
-
     params = %{
-      session_id: session_id,
+      session_id: socket.assigns.session_record.id,
       selected_text: socket.assigns.selected_text,
       start_row: socket.assigns.selection_start_row,
       start_col: socket.assigns.selection_start_col,
@@ -107,7 +106,7 @@ defmodule SpotterWeb.SessionLive do
         {:noreply,
          socket
          |> assign(
-           annotations: load_annotations(session_id),
+           annotations: load_annotations(socket.assigns.session_record),
            selected_text: nil
          )}
 
@@ -121,7 +120,7 @@ defmodule SpotterWeb.SessionLive do
       {:ok, annotation} ->
         Ash.destroy!(annotation)
 
-        {:noreply, assign(socket, annotations: load_annotations(socket.assigns.session_id))}
+        {:noreply, assign(socket, annotations: load_annotations(socket.assigns.session_record))}
 
       _ ->
         {:noreply, socket}
@@ -214,8 +213,8 @@ defmodule SpotterWeb.SessionLive do
   end
 
   defp load_transcript(session_id) do
-    case Ash.get(Session, session_id) do
-      {:ok, session} ->
+    case Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one() do
+      {:ok, %Session{} = session} ->
         messages = load_session_messages(session)
         {session, messages, TranscriptRenderer.render(messages)}
 
@@ -235,9 +234,11 @@ defmodule SpotterWeb.SessionLive do
     |> Ash.read!()
   end
 
-  defp load_annotations(session_id) do
+  defp load_annotations(nil), do: []
+
+  defp load_annotations(%Session{id: id}) do
     Annotation
-    |> Ash.Query.filter(session_id == ^session_id)
+    |> Ash.Query.filter(session_id == ^id)
     |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.read!()
   end

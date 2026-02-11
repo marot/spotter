@@ -1,6 +1,8 @@
 defmodule SpotterWeb.ErrorRenderingTest do
   use ExUnit.Case, async: true
 
+  alias Phoenix.HTML.Safe
+
   @endpoint SpotterWeb.Endpoint
 
   test "unknown html route renders 404 page" do
@@ -26,7 +28,7 @@ defmodule SpotterWeb.ErrorRenderingTest do
   test "500 html page copy is present" do
     body =
       SpotterWeb.ErrorHTML.render("500.html", %{})
-      |> Phoenix.HTML.Safe.to_iodata()
+      |> Safe.to_iodata()
       |> IO.iodata_to_binary()
 
     assert body =~ "Internal server error"
