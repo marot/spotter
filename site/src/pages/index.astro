@@ -1,0 +1,117 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Spotter | Terminal Session Intelligence">
+  <main>
+    <section class="hero">
+      <h1>Spotter</h1>
+      <p class="lead">
+        Spotter gives structure to terminal session output so teams can search,
+        review, and analyze runs without scrolling through raw logs.
+      </p>
+      <div class="cta">
+        <a href="https://github.com/marot/spotter" class="btn btn-primary">View on GitHub</a>
+        <a href="https://github.com/marot/spotter/issues" class="btn btn-secondary">Report an Issue</a>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="card">
+        <h2>Capture Context</h2>
+        <p>Record terminal sessions with structured metadata so every command, output, and annotation is preserved.</p>
+      </div>
+      <div class="card">
+        <h2>Inspect Faster</h2>
+        <p>Navigate sessions with search, filtering, and an interactive terminal replay instead of scrolling raw text.</p>
+      </div>
+      <div class="card">
+        <h2>Self-hosted and OSS</h2>
+        <p>Run Spotter on your own infrastructure. No third-party services, no data leaving your network.</p>
+      </div>
+    </section>
+  </main>
+</Layout>
+
+<style>
+  main {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 4rem 1.5rem;
+  }
+
+  .hero {
+    text-align: center;
+    margin-bottom: 4rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin-bottom: 1rem;
+  }
+
+  .lead {
+    font-size: 1.25rem;
+    color: var(--color-muted);
+    max-width: 40rem;
+    margin: 0 auto 2rem;
+  }
+
+  .cta {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.15s;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover {
+    background: var(--color-accent-hover);
+  }
+
+  .btn-secondary {
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  .btn-secondary:hover {
+    background: #334155;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 1.5rem;
+  }
+
+  .card {
+    background: var(--color-surface);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+  }
+
+  .card h2 {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .card p {
+    color: var(--color-muted);
+    font-size: 0.95rem;
+  }
+</style>

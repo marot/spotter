@@ -16,3 +16,5 @@ config/dev.local.exs
 assets/node_modules
 priv/static/assets/
 /path/
+site/node_modules
+site/.astro
