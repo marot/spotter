@@ -4,7 +4,7 @@ defmodule SpotterWeb.PaneListLive do
   alias Spotter.Services.SessionRegistry
   alias Spotter.Services.Tmux
   alias Spotter.Transcripts.Jobs.SyncTranscripts
-  alias Spotter.Transcripts.{Session, ToolCall}
+  alias Spotter.Transcripts.{Session, SessionPresenter, ToolCall}
 
   require Ash.Query
 
@@ -233,7 +233,7 @@ defmodule SpotterWeb.PaneListLive do
     end)
   end
 
-  defp relative_time(nil), do: "—"
+  defp relative_time(nil), do: "\u2014"
 
   defp relative_time(dt) do
     diff = DateTime.diff(DateTime.utc_now(), dt, :second)
@@ -244,10 +244,6 @@ defmodule SpotterWeb.PaneListLive do
       diff < 86_400 -> "#{div(diff, 3600)}h ago"
       true -> "#{div(diff, 86_400)}d ago"
     end
-  end
-
-  defp session_label(session) do
-    session.slug || String.slice(session.session_id, 0, 8)
   end
 
   @impl true
@@ -328,7 +324,10 @@ defmodule SpotterWeb.PaneListLive do
                   </thead>
                   <tbody>
                     <tr :for={session <- project.visible_sessions}>
-                      <td>{session_label(session)}</td>
+                      <td>
+                        <div>{SessionPresenter.primary_label(session)}</div>
+                        <div style="font-size: 0.75em; color: #888;">{SessionPresenter.secondary_label(session)}</div>
+                      </td>
                       <td>{session.git_branch || "—"}</td>
                       <td>{session.message_count || 0}</td>
                       <td>
@@ -342,7 +341,15 @@ defmodule SpotterWeb.PaneListLive do
                             <span>—</span>
                         <% end %>
                       </td>
-                      <td>{relative_time(session.started_at)}</td>
+                      <td>
+                        <% started = SessionPresenter.started_display(session.started_at) %>
+                        <%= if started do %>
+                          <div>{started.relative}</div>
+                          <div style="font-size: 0.75em; color: #888;">{started.absolute}</div>
+                        <% else %>
+                          —
+                        <% end %>
+                      </td>
                       <td style="display: flex; gap: 0.3rem;">
                         <button
                           phx-click="review_session"
@@ -405,7 +412,10 @@ defmodule SpotterWeb.PaneListLive do
                       </thead>
                       <tbody>
                         <tr :for={session <- project.hidden_sessions}>
-                          <td>{session_label(session)}</td>
+                          <td>
+                            <div>{SessionPresenter.primary_label(session)}</div>
+                            <div style="font-size: 0.75em; color: #888;">{SessionPresenter.secondary_label(session)}</div>
+                          </td>
                           <td>{session.git_branch || "—"}</td>
                           <td>{session.message_count || 0}</td>
                           <td>

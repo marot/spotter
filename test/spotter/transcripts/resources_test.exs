@@ -54,6 +54,43 @@ defmodule Spotter.Transcripts.ResourcesTest do
       assert session.schema_version == 1
       assert session.transcript_dir == "test-dir"
     end
+
+    test "creates session with resume metadata" do
+      project = Ash.create!(Project, %{name: "test-meta", pattern: "^test"})
+
+      session =
+        Ash.create!(Session, %{
+          session_id: Ash.UUID.generate(),
+          transcript_dir: "test-dir",
+          project_id: project.id,
+          custom_title: "My Session",
+          summary: "Did some work",
+          first_prompt: "Help me",
+          source_created_at: ~U[2026-01-15 10:00:00Z],
+          source_modified_at: ~U[2026-01-15 11:00:00Z]
+        })
+
+      assert session.custom_title == "My Session"
+      assert session.summary == "Did some work"
+      assert session.first_prompt == "Help me"
+      assert session.source_created_at == ~U[2026-01-15 10:00:00.000000Z]
+      assert session.source_modified_at == ~U[2026-01-15 11:00:00.000000Z]
+    end
+
+    test "updates session resume metadata" do
+      project = Ash.create!(Project, %{name: "test-update", pattern: "^test"})
+
+      session =
+        Ash.create!(Session, %{
+          session_id: Ash.UUID.generate(),
+          transcript_dir: "test-dir",
+          project_id: project.id
+        })
+
+      updated = Ash.update!(session, %{custom_title: "New Title", summary: "New Summary"})
+      assert updated.custom_title == "New Title"
+      assert updated.summary == "New Summary"
+    end
   end
 
   describe "Message" do

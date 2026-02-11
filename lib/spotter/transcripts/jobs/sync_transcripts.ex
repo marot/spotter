@@ -9,6 +9,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
 
   alias Spotter.Transcripts.Config
   alias Spotter.Transcripts.JsonlParser
+  alias Spotter.Transcripts.SessionsIndex
 
   require Ash.Query
 
@@ -123,14 +124,17 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       )
     end
 
+    # Load sessions-index once per directory
+    index = SessionsIndex.read(dir)
+
     Enum.each(files, fn file ->
-      sync_session_file(project, dir, file)
+      sync_session_file(project, dir, file, index)
     end)
 
     length(files)
   end
 
-  defp sync_session_file(project, dir, file) do
+  defp sync_session_file(project, dir, file, index) do
     transcript_dir = Path.basename(dir)
 
     case JsonlParser.parse_session_file(file) do
@@ -138,7 +142,8 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
         Logger.debug("Skipping file without session_id: #{file}")
 
       {:ok, parsed} ->
-        session = upsert_session!(project, transcript_dir, parsed)
+        index_meta = Map.get(index, parsed.session_id, %{})
+        session = upsert_session!(project, transcript_dir, parsed, index_meta)
         create_messages!(session, parsed.messages)
         create_tool_calls!(session, parsed.messages)
         sync_subagents(session, dir, parsed.session_id)
@@ -148,8 +153,8 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
     end
   end
 
-  defp upsert_session!(project, transcript_dir, parsed) do
-    update_attrs = %{
+  defp upsert_session!(project, transcript_dir, parsed, index_meta) do
+    base_attrs = %{
       slug: parsed.slug,
       cwd: parsed.cwd,
       git_branch: parsed.git_branch,
@@ -157,18 +162,28 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       started_at: parsed.started_at,
       ended_at: parsed.ended_at,
       schema_version: parsed.schema_version,
-      message_count: length(parsed.messages)
+      message_count: length(parsed.messages),
+      custom_title: index_meta[:custom_title],
+      summary: index_meta[:summary],
+      first_prompt: index_meta[:first_prompt],
+      source_created_at: index_meta[:source_created_at],
+      source_modified_at: index_meta[:source_modified_at]
     }
 
     case Spotter.Transcripts.Session
          |> Ash.Query.filter(session_id == ^parsed.session_id)
          |> Ash.read!() do
       [session] ->
+        update_attrs = apply_timestamp_fallbacks(base_attrs, session)
         Ash.update!(session, update_attrs)
 
       [] ->
+        # For new sessions, apply index timestamp fallbacks
         create_attrs =
-          Map.merge(update_attrs, %{
+          base_attrs
+          |> Map.put(:started_at, base_attrs.started_at || index_meta[:source_created_at])
+          |> Map.put(:ended_at, base_attrs.ended_at || index_meta[:source_modified_at])
+          |> Map.merge(%{
             session_id: parsed.session_id,
             transcript_dir: transcript_dir,
             project_id: project.id
@@ -176,6 +191,22 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
 
         Ash.create!(Spotter.Transcripts.Session, create_attrs)
     end
+  end
+
+  # Never overwrite existing non-nil timestamps with nil
+  defp apply_timestamp_fallbacks(attrs, existing_session) do
+    attrs
+    |> maybe_preserve(:started_at, existing_session, attrs[:source_created_at])
+    |> maybe_preserve(:ended_at, existing_session, attrs[:source_modified_at])
+  end
+
+  defp maybe_preserve(attrs, field, existing_session, index_fallback) do
+    new_value = attrs[field]
+    existing_value = Map.get(existing_session, field)
+
+    resolved = new_value || index_fallback || existing_value
+
+    Map.put(attrs, field, resolved)
   end
 
   defp create_messages!(session, messages) do

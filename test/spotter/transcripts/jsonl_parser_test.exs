@@ -96,6 +96,65 @@ defmodule Spotter.Transcripts.JsonlParserTest do
     end
   end
 
+  describe "timestamp fallback" do
+    test "started_at uses first non-nil timestamp when first line has none" do
+      file = Path.join(@fixtures_dir, "ts_fallback.jsonl")
+
+      lines = [
+        # First line: file_history_snapshot with no timestamp
+        Jason.encode!(%{
+          "uuid" => "msg-1",
+          "type" => "file_history_snapshot",
+          "sessionId" => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }),
+        # Second line: has a timestamp
+        Jason.encode!(%{
+          "uuid" => "msg-2",
+          "type" => "user",
+          "timestamp" => "2026-01-15T10:00:00.000Z",
+          "message" => %{"role" => "user", "content" => "Hello"}
+        }),
+        # Third line: has a later timestamp
+        Jason.encode!(%{
+          "uuid" => "msg-3",
+          "type" => "assistant",
+          "timestamp" => "2026-01-15T10:05:00.000Z",
+          "message" => %{"role" => "assistant", "content" => "Hi"}
+        })
+      ]
+
+      File.write!(file, Enum.join(lines, "\n"))
+
+      {:ok, result} = JsonlParser.parse_session_file(file)
+
+      assert result.started_at == ~U[2026-01-15 10:00:00.000Z]
+      assert result.ended_at == ~U[2026-01-15 10:05:00.000Z]
+    end
+
+    test "started_at and ended_at are nil when all timestamps are nil" do
+      file = Path.join(@fixtures_dir, "no_timestamps.jsonl")
+
+      lines = [
+        Jason.encode!(%{
+          "uuid" => "msg-1",
+          "type" => "file_history_snapshot",
+          "sessionId" => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }),
+        Jason.encode!(%{
+          "uuid" => "msg-2",
+          "type" => "system"
+        })
+      ]
+
+      File.write!(file, Enum.join(lines, "\n"))
+
+      {:ok, result} = JsonlParser.parse_session_file(file)
+
+      assert result.started_at == nil
+      assert result.ended_at == nil
+    end
+  end
+
   describe "detect_schema_version/1" do
     test "returns 1 for current format" do
       assert JsonlParser.detect_schema_version([]) == 1

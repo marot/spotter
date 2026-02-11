@@ -163,13 +163,23 @@ defmodule Spotter.Transcripts.JsonlParser do
       cwd: find_field(first_messages, :cwd),
       git_branch: find_field(first_messages, :git_branch),
       version: find_field(first_messages, :version),
-      started_at: List.first(messages)[:timestamp],
-      ended_at: List.last(messages)[:timestamp]
+      started_at: first_non_nil_timestamp(messages),
+      ended_at: last_non_nil_timestamp(messages)
     }
   end
 
   defp find_field(messages, field) do
     Enum.find_value(messages, fn msg -> msg[field] end)
+  end
+
+  defp first_non_nil_timestamp(messages) do
+    Enum.find_value(messages, fn msg -> msg[:timestamp] end)
+  end
+
+  defp last_non_nil_timestamp(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn msg -> msg[:timestamp] end)
   end
 
   defp extract_agent_id(path) do

@@ -36,7 +36,12 @@ defmodule Spotter.Transcripts.Session do
         :ended_at,
         :schema_version,
         :message_count,
-        :project_id
+        :project_id,
+        :custom_title,
+        :summary,
+        :first_prompt,
+        :source_created_at,
+        :source_modified_at
       ]
     end
 
@@ -51,7 +56,12 @@ defmodule Spotter.Transcripts.Session do
         :started_at,
         :ended_at,
         :schema_version,
-        :message_count
+        :message_count,
+        :custom_title,
+        :summary,
+        :first_prompt,
+        :source_created_at,
+        :source_modified_at
       ]
     end
 
@@ -89,6 +99,12 @@ defmodule Spotter.Transcripts.Session do
 
     attribute :message_count, :integer
     attribute :hidden_at, :utc_datetime_usec, allow_nil?: true
+
+    attribute :custom_title, :string
+    attribute :summary, :string
+    attribute :first_prompt, :string
+    attribute :source_created_at, :utc_datetime_usec
+    attribute :source_modified_at, :utc_datetime_usec
 
     create_timestamp :inserted_at
     update_timestamp :updated_at
