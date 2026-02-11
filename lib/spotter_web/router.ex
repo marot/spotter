@@ -22,6 +22,7 @@ defmodule SpotterWeb.Router do
     post("/hooks/session-start", SessionHookController, :session_start)
     post("/hooks/file-snapshot", HooksController, :file_snapshot)
     post("/hooks/tool-call", HooksController, :tool_call)
+    post("/hooks/commit-event", HooksController, :commit_event)
   end
 
   scope "/", SpotterWeb do

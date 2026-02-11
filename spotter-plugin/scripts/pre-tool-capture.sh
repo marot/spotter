@@ -48,14 +48,17 @@ case "$TOOL_NAME" in
 
   Bash)
     BASELINE_FILE="/tmp/spotter-git-baseline-${TOOL_USE_ID}.txt"
+    HEAD_FILE="/tmp/spotter-git-head-${TOOL_USE_ID}.txt"
 
     if git rev-parse --git-dir > /dev/null 2>&1; then
       {
         git diff --name-only HEAD 2>/dev/null || true
         git status --porcelain 2>/dev/null | awk '{print $2}' || true
       } | sort -u > "$BASELINE_FILE"
+      git rev-parse HEAD 2>/dev/null > "$HEAD_FILE" || echo "" > "$HEAD_FILE"
     else
       touch "$BASELINE_FILE"
+      echo "" > "$HEAD_FILE"
     fi
     ;;
 esac

@@ -2,11 +2,44 @@ defmodule SpotterWeb.HooksController do
   @moduledoc false
   use Phoenix.Controller, formats: [:json]
 
+  alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
+  alias Spotter.Transcripts.Jobs.EnrichCommits
   alias Spotter.Transcripts.Session
+  alias Spotter.Transcripts.SessionCommitLink
   alias Spotter.Transcripts.ToolCall
 
   require Ash.Query
+
+  @max_commit_hashes 50
+  @hash_pattern ~r/\A[0-9a-fA-F]{40}\z/
+
+  def commit_event(conn, %{"session_id" => session_id, "new_commit_hashes" => hashes} = params)
+      when is_binary(session_id) and is_list(hashes) do
+    with :ok <- validate_hashes(hashes),
+         {:ok, session} <- find_session(session_id) do
+      evidence = build_evidence(params)
+      ingested = ingest_commits(hashes, session, params["git_branch"], evidence)
+      enqueue_enrichment(hashes, session)
+
+      conn |> put_status(:created) |> json(%{ok: true, ingested: ingested})
+    else
+      {:error, :too_many} ->
+        conn |> put_status(:bad_request) |> json(%{error: "too many commit hashes (max 50)"})
+
+      {:error, :invalid_format} ->
+        conn |> put_status(:bad_request) |> json(%{error: "invalid commit hash format"})
+
+      {:error, :session_not_found} ->
+        conn |> put_status(:not_found) |> json(%{error: "session not found"})
+    end
+  end
+
+  def commit_event(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: "session_id and new_commit_hashes required"})
+  end
 
   def file_snapshot(conn, %{"session_id" => session_id} = params)
       when is_binary(session_id) do
@@ -66,6 +99,54 @@ defmodule SpotterWeb.HooksController do
 
   def tool_call(conn, _params) do
     conn |> put_status(:bad_request) |> json(%{error: "session_id is required"})
+  end
+
+  defp enqueue_enrichment(hashes, session) when hashes != [] do
+    %{
+      commit_hashes: hashes,
+      session_id: session.session_id,
+      git_cwd: session.cwd || "."
+    }
+    |> EnrichCommits.new()
+    |> Oban.insert()
+  end
+
+  defp enqueue_enrichment(_, _), do: :ok
+
+  defp validate_hashes(hashes) do
+    cond do
+      length(hashes) > @max_commit_hashes -> {:error, :too_many}
+      not Enum.all?(hashes, &Regex.match?(@hash_pattern, &1)) -> {:error, :invalid_format}
+      true -> :ok
+    end
+  end
+
+  defp build_evidence(params) do
+    %{
+      "tool_use_id" => params["tool_use_id"],
+      "base_head" => params["base_head"],
+      "head" => params["head"],
+      "captured_at" => params["captured_at"],
+      "source" => "hook-minimal"
+    }
+  end
+
+  defp ingest_commits(hashes, session, git_branch, evidence) do
+    Enum.count(hashes, fn hash ->
+      with {:ok, commit} <- Ash.create(Commit, %{commit_hash: hash, git_branch: git_branch}),
+           {:ok, _link} <-
+             Ash.create(SessionCommitLink, %{
+               session_id: session.id,
+               commit_id: commit.id,
+               link_type: :observed_in_session,
+               confidence: 1.0,
+               evidence: evidence
+             }) do
+        true
+      else
+        _ -> false
+      end
+    end)
   end
 
   defp find_session(session_id) do

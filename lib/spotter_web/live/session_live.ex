@@ -2,7 +2,7 @@ defmodule SpotterWeb.SessionLive do
   use Phoenix.LiveView
 
   alias Spotter.Services.{SessionRegistry, Tmux, TranscriptRenderer}
-  alias Spotter.Transcripts.{Annotation, Message, Session, ToolCall}
+  alias Spotter.Transcripts.{Annotation, Commit, Message, Session, SessionCommitLink, ToolCall}
   require Ash.Query
 
   @impl true
@@ -22,6 +22,7 @@ defmodule SpotterWeb.SessionLive do
     {session_record, messages, rendered_lines} = load_transcript(session_id)
     annotations = load_annotations(session_record)
     errors = load_errors(session_record)
+    commit_links = load_commit_links(session_id)
 
     {:ok,
      assign(socket,
@@ -39,6 +40,7 @@ defmodule SpotterWeb.SessionLive do
        messages: messages,
        rendered_lines: rendered_lines,
        errors: errors,
+       commit_links: commit_links,
        current_message_id: nil,
        show_transcript: true
      )}
@@ -349,6 +351,41 @@ defmodule SpotterWeb.SessionLive do
         <% end %>
       </div>
       <div style="flex: 1; background: #16213e; padding: 1rem; overflow-y: auto; border-left: 1px solid #2a2a4a;">
+        <h3 style="margin: 0 0 0.75rem 0; color: #64b5f6;">Commits</h3>
+
+        <%= if @commit_links == [] do %>
+          <p style="color: #666; font-style: italic; font-size: 0.85em; margin-bottom: 1rem;">
+            No linked commits yet.
+          </p>
+        <% else %>
+          <div style="margin-bottom: 1rem;">
+            <%= for %{link: link, commit: commit} <- @commit_links do %>
+              <div style="background: #1a1a2e; border-radius: 6px; padding: 0.6rem; margin-bottom: 0.4rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <code style="color: #f0c674; font-size: 0.85em;">
+                    <%= String.slice(commit.commit_hash, 0, 8) %>
+                  </code>
+                  <%= if link.link_type == :observed_in_session do %>
+                    <span style="background: #1a6b3c; color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px;">
+                      Verified
+                    </span>
+                  <% else %>
+                    <span style="background: #6b4c1a; color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px;">
+                      Inferred <%= round(link.confidence * 100) %>%
+                    </span>
+                  <% end %>
+                </div>
+                <div style="color: #c0c0c0; font-size: 0.8em; margin-top: 0.25rem;">
+                  <%= commit.subject || "(no subject)" %>
+                </div>
+                <div :if={commit.git_branch} style="color: #666; font-size: 0.7em; margin-top: 0.15rem;">
+                  <%= commit.git_branch %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
         <h3 style="margin: 0 0 1rem 0; color: #64b5f6;">Annotations</h3>
 
         <%= if @selected_text do %>
@@ -401,6 +438,38 @@ defmodule SpotterWeb.SessionLive do
       </div>
     </div>
     """
+  end
+
+  defp load_commit_links(session_id) do
+    case Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one() do
+      {:ok, %Session{id: id}} ->
+        links =
+          SessionCommitLink
+          |> Ash.Query.filter(session_id == ^id)
+          |> Ash.Query.sort(inserted_at: :desc)
+          |> Ash.read!()
+
+        commit_ids = Enum.map(links, & &1.commit_id)
+
+        commits_by_id =
+          Commit
+          |> Ash.Query.filter(id in ^commit_ids)
+          |> Ash.read!()
+          |> Map.new(&{&1.id, &1})
+
+        Enum.map(links, fn link ->
+          commit = Map.get(commits_by_id, link.commit_id)
+          %{link: link, commit: commit}
+        end)
+        |> Enum.reject(&is_nil(&1.commit))
+        |> Enum.sort_by(
+          fn %{commit: c} -> {c.committed_at || c.inserted_at, c.inserted_at} end,
+          {:desc, DateTime}
+        )
+
+      _ ->
+        []
+    end
   end
 
   defp type_color(:assistant), do: "color: #e0e0e0;"

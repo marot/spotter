@@ -27,6 +27,10 @@ git gtr rm my-feature
 ## Or remove all worktrees with merged PRs/MRs (requires gh or glab CLI)
 git gtr clean --merged
 
+# Commit Linking
+
+Sessions are linked to Git commits via hooks (deterministic, confidence 1.0) and async enrichment (inferred, confidence 0.60-0.90). Hook scripts must stay under 200ms and never call `git show` or `git patch-id`. See README for full details.
+
 # Agent Instructions
 
 - Do not ignore credo lintings. Fix them.

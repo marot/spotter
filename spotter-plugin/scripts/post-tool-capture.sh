@@ -141,10 +141,52 @@ case "$TOOL_NAME" in
 
   Bash)
     BASELINE_FILE="/tmp/spotter-git-baseline-${TOOL_USE_ID}.txt"
+    HEAD_FILE="/tmp/spotter-git-head-${TOOL_USE_ID}.txt"
 
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
-      rm -f "$BASELINE_FILE"
+      rm -f "$BASELINE_FILE" "$HEAD_FILE"
       exit 0
+    fi
+
+    # Capture commit event
+    BASE_HEAD=""
+    if [ -f "$HEAD_FILE" ]; then
+      BASE_HEAD="$(cat "$HEAD_FILE")"
+      rm -f "$HEAD_FILE"
+    fi
+
+    CURRENT_HEAD="$(git rev-parse HEAD 2>/dev/null || echo "")"
+
+    if [ -n "$BASE_HEAD" ] && [ -n "$CURRENT_HEAD" ] && [ "$BASE_HEAD" != "$CURRENT_HEAD" ]; then
+      NEW_HASHES="$(git rev-list --reverse "${BASE_HEAD}..${CURRENT_HEAD}" 2>/dev/null | head -50 || echo "")"
+    else
+      NEW_HASHES=""
+    fi
+
+    if [ -n "$NEW_HASHES" ]; then
+      GIT_BRANCH="$(git branch --show-current 2>/dev/null || echo "")"
+      COMMIT_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
+
+      HASHES_JSON="$(echo "$NEW_HASHES" | jq -R . | jq -s .)"
+
+      COMMIT_JSON="$(jq -n \
+        --arg session_id "$SESSION_ID" \
+        --arg tool_use_id "$TOOL_USE_ID" \
+        --arg git_branch "$GIT_BRANCH" \
+        --arg base_head "$BASE_HEAD" \
+        --arg head "$CURRENT_HEAD" \
+        --argjson new_commit_hashes "$HASHES_JSON" \
+        --arg captured_at "$COMMIT_TIMESTAMP" \
+        '{session_id: $session_id, tool_use_id: $tool_use_id, git_branch: $git_branch, base_head: $base_head, head: $head, new_commit_hashes: $new_commit_hashes, captured_at: $captured_at}'
+      )"
+
+      curl -s -o /dev/null -X POST \
+        "${SPOTTER_URL}/api/hooks/commit-event" \
+        -H "Content-Type: application/json" \
+        -d "$COMMIT_JSON" \
+        --connect-timeout 0.1 \
+        --max-time 0.3 \
+        2>/dev/null || true
     fi
 
     # Capture current state

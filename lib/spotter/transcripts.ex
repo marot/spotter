@@ -36,6 +36,16 @@ defmodule Spotter.Transcripts do
         get :read
         index :read
       end
+
+      base_route "/commits", Spotter.Transcripts.Commit do
+        get :read
+        index :read
+      end
+
+      base_route "/session_commit_links", Spotter.Transcripts.SessionCommitLink do
+        get :read
+        index :read
+      end
     end
   end
 
@@ -47,5 +57,7 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.Annotation
     resource Spotter.Transcripts.FileSnapshot
     resource Spotter.Transcripts.ToolCall
+    resource Spotter.Transcripts.Commit
+    resource Spotter.Transcripts.SessionCommitLink
   end
 end
