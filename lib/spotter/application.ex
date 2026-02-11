@@ -7,6 +7,7 @@ defmodule Spotter.Application do
   def start(_type, _args) do
     children = [
       {Phoenix.PubSub, name: Spotter.PubSub},
+      Spotter.Services.SessionRegistry,
       Spotter.Repo,
       {Oban,
        AshOban.config(

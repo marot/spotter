@@ -14,7 +14,7 @@ defmodule Spotter.Transcripts.Annotation do
 
     create :create do
       primary? true
-      accept [:pane_id, :selected_text, :start_row, :start_col, :end_row, :end_col, :comment]
+      accept [:session_id, :selected_text, :start_row, :start_col, :end_row, :end_col, :comment]
     end
 
     update :update do
@@ -26,7 +26,6 @@ defmodule Spotter.Transcripts.Annotation do
   attributes do
     uuid_v7_primary_key :id
 
-    attribute :pane_id, :string, allow_nil?: false
     attribute :selected_text, :string, allow_nil?: false
     attribute :start_row, :integer, allow_nil?: false
     attribute :start_col, :integer, allow_nil?: false
@@ -36,5 +35,11 @@ defmodule Spotter.Transcripts.Annotation do
 
     create_timestamp :inserted_at
     update_timestamp :updated_at
+  end
+
+  relationships do
+    belongs_to :session, Spotter.Transcripts.Session do
+      allow_nil? false
+    end
   end
 end

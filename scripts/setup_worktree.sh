@@ -97,7 +97,8 @@ if command -v tmux &>/dev/null; then
   if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
     echo "==> tmux session '$SESSION_NAME' already exists"
   else
-    tmux new-session -d -s "$SESSION_NAME" -c "$WORKTREE_ROOT" 'claude --dangerously-skip-permissions'
+    PLUGIN_DIR="$(realpath "$main_path/spotter-plugin")"
+    tmux new-session -d -s "$SESSION_NAME" -c "$WORKTREE_ROOT" "claude --plugin-dir $PLUGIN_DIR --dangerously-skip-permissions"
     echo "==> Created tmux session '$SESSION_NAME'"
   fi
 fi

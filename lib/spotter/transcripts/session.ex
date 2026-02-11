@@ -85,6 +85,7 @@ defmodule Spotter.Transcripts.Session do
 
     has_many :messages, Spotter.Transcripts.Message
     has_many :subagents, Spotter.Transcripts.Subagent
+    has_many :annotations, Spotter.Transcripts.Annotation
   end
 
   identities do

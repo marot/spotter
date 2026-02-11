@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify-session.sh",
+        "timeout": 5000
+      }
+    ]
+  }
+}
