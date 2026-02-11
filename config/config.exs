@@ -12,6 +12,10 @@ config :spotter, Oban,
 config :spotter, ecto_repos: [Spotter.Repo], ash_domains: [Spotter.Transcripts]
 
 config :spotter, SpotterWeb.Endpoint,
+  render_errors: [
+    formats: [html: SpotterWeb.ErrorHTML, json: SpotterWeb.ErrorJSON],
+    layout: false
+  ],
   live_view: [signing_salt: "spotter_lv_salt"],
   pubsub_server: Spotter.PubSub
 

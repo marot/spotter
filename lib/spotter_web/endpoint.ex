@@ -1,7 +1,5 @@
 defmodule SpotterWeb.Endpoint do
-  use Phoenix.Endpoint,
-    otp_app: :spotter,
-    render_errors: [formats: [html: SpotterWeb.ErrorHTML], layout: false]
+  use Phoenix.Endpoint, otp_app: :spotter
 
   if Code.ensure_loaded?(Tidewave) do
     plug(Tidewave, allow_remote_access: true)
