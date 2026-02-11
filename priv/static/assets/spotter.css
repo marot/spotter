@@ -1,0 +1,170 @@
+/* Transcript panel tokens */
+:root {
+  --transcript-bg: #f8fafc;
+  --transcript-surface: #ffffff;
+  --transcript-text: #0f172a;
+  --transcript-muted: #475569;
+  --transcript-border: #cbd5e1;
+  --thinking-bg: #eef2f7;
+  --thinking-text: #475569;
+}
+
+/* Transcript panel container */
+#transcript-panel {
+  background: var(--transcript-bg);
+  color: var(--transcript-text);
+}
+
+#transcript-panel h3 {
+  color: var(--transcript-text);
+}
+
+#transcript-panel .transcript-header-hint {
+  color: var(--transcript-muted);
+  font-size: 0.7em;
+  margin-left: auto;
+}
+
+/* Transcript rows */
+.transcript-row {
+  padding: 2px 6px;
+  border-left: 2px solid transparent;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8em;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.transcript-row.is-active {
+  background: #e0ecff;
+  border-left-color: #3b82f6;
+}
+
+/* Kind: text */
+.transcript-row .row-text {
+  color: var(--transcript-text);
+}
+
+.transcript-row.is-user .row-text {
+  color: #1d4ed8;
+}
+
+/* Kind: thinking */
+.transcript-row.is-thinking {
+  background: var(--thinking-bg);
+  border-radius: 3px;
+  margin: 1px 0;
+}
+
+.transcript-row.is-thinking .row-text {
+  color: var(--thinking-text);
+  font-style: italic;
+}
+
+/* Kind: tool_use (thread opener) */
+.transcript-row.is-tool-use {
+  background: var(--transcript-surface);
+  border-left-color: #94a3b8;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.transcript-row.is-tool-use .row-text {
+  color: #334155;
+}
+
+/* Kind: tool_result (threaded under tool_use) */
+.transcript-row.is-tool-result {
+  background: var(--transcript-surface);
+  border-left-color: #cbd5e1;
+  padding-left: 14px;
+}
+
+.transcript-row.is-tool-result .row-text {
+  color: var(--transcript-muted);
+}
+
+/* Kind: code */
+.transcript-row.is-code .row-text {
+  font-family: 'JetBrains Mono', monospace;
+  background: #f1f5f9;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Subagent rows */
+.transcript-row.is-subagent {
+  border-left-color: #8b5cf6;
+  background: #f5f3ff;
+}
+
+.transcript-row.is-subagent .subagent-badge {
+  display: inline-block;
+  background: #8b5cf6;
+  color: #ffffff;
+  font-size: 0.75em;
+  padding: 0 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.transcript-row.is-subagent .subagent-badge:hover {
+  background: #7c3aed;
+}
+
+.transcript-row.is-subagent.is-clicked {
+  border-left-color: #6d28d9;
+  background: #ede9fe;
+}
+
+/* Error panel in transcript */
+.transcript-error-panel {
+  margin-bottom: 1rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.transcript-error-panel .error-title {
+  color: #dc2626;
+  font-size: 0.85em;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+
+.transcript-error-item {
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.8em;
+}
+
+.transcript-error-item:hover {
+  background: #fee2e2;
+}
+
+.transcript-error-item .error-tool {
+  color: #dc2626;
+  font-weight: bold;
+}
+
+.transcript-error-item .error-content {
+  color: var(--transcript-muted);
+  margin-left: 0.5rem;
+}
+
+/* Empty state */
+.transcript-empty {
+  color: var(--transcript-muted);
+  font-style: italic;
+  font-size: 0.85em;
+}
+
+/* Thread grouping */
+.transcript-thread {
+  margin-bottom: 2px;
+}

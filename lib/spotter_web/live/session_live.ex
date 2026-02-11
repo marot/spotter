@@ -72,7 +72,8 @@ defmodule SpotterWeb.SessionLive do
         show_transcript: true,
         breakpoint_map: breakpoint_map,
         anchors: anchors,
-        show_debug: false
+        show_debug: false,
+        clicked_subagent: nil
       )
 
     socket = push_sync_events(socket)
@@ -267,6 +268,10 @@ defmodule SpotterWeb.SessionLive do
     {:noreply, assign(socket, show_debug: !socket.assigns.show_debug)}
   end
 
+  def handle_event("subagent_reference_clicked", %{"ref" => ref}, socket) do
+    {:noreply, assign(socket, clicked_subagent: ref)}
+  end
+
   # Legacy fallback — removed once breakpoint sync is stable
   def handle_event("terminal_scrolled", %{"visible_text" => visible_text}, socket) do
     current_message_id = find_matching_message(visible_text, socket.assigns.rendered_lines)
@@ -396,7 +401,8 @@ defmodule SpotterWeb.SessionLive do
     case Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one() do
       {:ok, %Session{} = session} ->
         messages = load_session_messages(session)
-        {session, messages, TranscriptRenderer.render(messages)}
+        opts = if session.cwd, do: [session_cwd: session.cwd], else: []
+        {session, messages, TranscriptRenderer.render(messages, opts)}
 
       _ ->
         {nil, [], []}
@@ -502,28 +508,28 @@ defmodule SpotterWeb.SessionLive do
           <% end %>
         </div>
       </div>
-      <div style="flex: 1; background: #0d1117; padding: 1rem; overflow-y: auto; border-left: 1px solid #2a2a4a;"
-           id="transcript-panel">
+      <div
+        style="flex: 1; padding: 1rem; overflow-y: auto; border-left: 1px solid var(--transcript-border);"
+        id="transcript-panel"
+      >
         <div style="display: flex; align-items: center; margin: 0 0 0.75rem 0;">
-          <h3 style="margin: 0; color: #64b5f6;">Transcript</h3>
-          <span style={"font-size: 0.7em; margin-left: auto; #{if @show_debug, do: "color: #f0c674; font-weight: bold;", else: "color: #444;"}"}>
+          <h3 style="margin: 0;">Transcript</h3>
+          <span class={"transcript-header-hint#{if @show_debug, do: " debug-active", else: ""}"}>
             {if @show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug"}
           </span>
         </div>
 
         <%= if @errors != [] do %>
-          <div style="margin-bottom: 1rem; background: #1a1a2e; border-radius: 6px; padding: 0.75rem;">
-            <div style="color: #f87171; font-size: 0.85em; font-weight: bold; margin-bottom: 0.5rem;">
-              Errors ({length(@errors)})
-            </div>
-            <div :for={error <- @errors}
+          <div class="transcript-error-panel">
+            <div class="error-title">Errors ({length(@errors)})</div>
+            <div
+              :for={error <- @errors}
               phx-click="jump_to_error"
               phx-value-tool-use-id={error.tool_use_id}
-              style="padding: 4px 6px; margin-bottom: 4px; cursor: pointer; border-radius: 4px; font-size: 0.8em;"
-              class="hover:bg-gray-800"
+              class="transcript-error-item"
             >
-              <span style="color: #f87171; font-weight: bold;">{error.tool_name}</span>
-              <span :if={error.error_content} style="color: #888; margin-left: 0.5rem;">
+              <span class="error-tool">{error.tool_name}</span>
+              <span :if={error.error_content} class="error-content">
                 {String.slice(error.error_content, 0, 100)}
               </span>
             </div>
@@ -531,27 +537,36 @@ defmodule SpotterWeb.SessionLive do
         <% end %>
 
         <%= if @rendered_lines != [] do %>
-          <div id="transcript-messages" phx-hook="TranscriptSelection" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8em;">
+          <div id="transcript-messages" phx-hook="TranscriptSelection">
             <%= for line <- @rendered_lines do %>
               <div
                 id={"msg-#{line.line_number}"}
                 data-message-id={line.message_id}
-                style={"padding: 2px 6px; #{if @current_message_id == line.message_id, do: "background: #1a2744; border-left: 2px solid #64b5f6;", else: "border-left: 2px solid transparent;"}"}
+                class={transcript_row_classes(line, @current_message_id, @clicked_subagent)}
               >
                 <%= if @show_debug do %>
                   <% anchor = Enum.find(@anchors, & &1.tl == line.line_number) %>
-                  <span :if={anchor} style={"display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:#{anchor_color(anchor.type)};"}
+                  <span
+                    :if={anchor}
+                    style={"display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:#{anchor_color(anchor.type)};"}
                     title={"#{anchor.type} → terminal line #{anchor.t}"}
                   />
                 <% end %>
-                <span style={type_color(line.type)}><%= line.line %></span>
+                <%= if line[:subagent_ref] do %>
+                  <span
+                    class="subagent-badge"
+                    phx-click="subagent_reference_clicked"
+                    phx-value-ref={line.subagent_ref}
+                  >
+                    agent
+                  </span>
+                <% end %>
+                <span class="row-text"><%= line.line %></span>
               </div>
             <% end %>
           </div>
         <% else %>
-          <p style="color: #666; font-style: italic; font-size: 0.85em;">
-            No transcript available for this session.
-          </p>
+          <p class="transcript-empty">No transcript available for this session.</p>
         <% end %>
       </div>
       <div style="flex: 1; background: #16213e; padding: 1rem; overflow-y: auto; border-left: 1px solid #2a2a4a;">
@@ -686,9 +701,29 @@ defmodule SpotterWeb.SessionLive do
     end
   end
 
-  defp type_color(:assistant), do: "color: #e0e0e0;"
-  defp type_color(:user), do: "color: #7ec8e3;"
-  defp type_color(_), do: "color: #888;"
+  defp transcript_row_classes(line, current_message_id, clicked_subagent) do
+    kind =
+      case line[:kind] do
+        :tool_use -> ["is-tool-use"]
+        :tool_result -> ["is-tool-result"]
+        :thinking -> ["is-thinking"]
+        _ -> []
+      end
+
+    type = if line.type == :user, do: ["is-user"], else: []
+    code = if line[:render_mode] == :code, do: ["is-code"], else: []
+    active = if current_message_id == line.message_id, do: ["is-active"], else: []
+
+    classes = ["transcript-row"] ++ kind ++ type ++ code ++ active
+    classes = classes ++ subagent_classes(line[:subagent_ref], clicked_subagent)
+    Enum.join(classes, " ")
+  end
+
+  defp subagent_classes(nil, _clicked), do: []
+
+  defp subagent_classes(ref, clicked) do
+    if clicked == ref, do: ["is-subagent", "is-clicked"], else: ["is-subagent"]
+  end
 
   defp anchor_color(:tool_use), do: "#f0c674"
   defp anchor_color(:user), do: "#7ec8e3"
