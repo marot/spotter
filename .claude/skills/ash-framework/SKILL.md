@@ -9,16 +9,17 @@ metadata:
 ## Additional References
 
 - [ash](references/ash.md)
+- [ash_ai](references/ash_ai.md)
+- [ash_computer](references/ash_computer.md)
+- [ash_phoenix](references/ash_phoenix.md)
 - [ash_oban](references/ash_oban.md)
 - [ash_sqlite](references/ash_sqlite.md)
-- [ash_phoenix](references/ash_phoenix.md)
-- [ash_ai](references/ash_ai.md)
 - [ash_json_api](references/ash_json_api.md)
 
 ## Searching Documentation
 
 ```sh
-mix usage_rules.search_docs "search term" -p ash -p ash_oban -p ash_sqlite -p ash_phoenix -p ash_ai -p ash_json_api
+mix usage_rules.search_docs "search term" -p ash -p ash_ai -p ash_computer -p ash_phoenix -p ash_oban -p ash_sqlite -p ash_json_api
 ```
 
 ## Available Mix Tasks
@@ -44,6 +45,17 @@ mix usage_rules.search_docs "search term" -p ash -p ash_oban -p ash_sqlite -p as
 - `mix ash.rollback` - Runs all rollback tasks for any extension on any resource/domain in your application.
 - `mix ash.setup` - Runs all setup tasks for any extension on any resource/domain in your application.
 - `mix ash.tear_down` - Runs all tear_down tasks for any extension on any resource/domain in your application.
+- `mix ash_ai.gen.chat` - Generates the resources and views for a conversational UI backed by `ash_postgres` and `ash_oban`
+- `mix ash_ai.gen.chat.docs`
+- `mix ash_ai.gen.mcp` - Sets up an MCP server for your application
+- `mix ash_ai.gen.mcp.docs`
+- `mix ash_ai.gen.usage_rules`
+- `mix ash_ai.gen.usage_rules.docs`
+- `mix ash_ai.install` - Installs `AshAi`. Call with `mix igniter.install ash_ai`. Requires igniter to run.
+- `mix ash_ai.install.docs`
+- `mix ash_phoenix.gen.html` - Generates a controller and HTML views for an existing Ash resource.
+- `mix ash_phoenix.gen.live` - Generates liveviews for a given domain and resource.
+- `mix ash_phoenix.install` - Installs AshPhoenix into a project. Should be called with `mix igniter.install ash_phoenix`
 - `mix ash_oban.install` - Installs AshOban and Oban
 - `mix ash_oban.install.docs`
 - `mix ash_oban.set_default_module_names` - Set module names to their default values for triggers and scheduled actions
@@ -55,17 +67,6 @@ mix usage_rules.search_docs "search term" -p ash -p ash_oban -p ash_sqlite -p as
 - `mix ash_sqlite.install` - Installs AshSqlite. Should be run with `mix igniter.install ash_sqlite`
 - `mix ash_sqlite.migrate` - Runs the repository migrations for all repositories in the provided (or configured) domains
 - `mix ash_sqlite.rollback` - Rolls back the repository migrations for all repositories in the provided (or configured) domains
-- `mix ash_phoenix.gen.html` - Generates a controller and HTML views for an existing Ash resource.
-- `mix ash_phoenix.gen.live` - Generates liveviews for a given domain and resource.
-- `mix ash_phoenix.install` - Installs AshPhoenix into a project. Should be called with `mix igniter.install ash_phoenix`
-- `mix ash_ai.gen.chat` - Generates the resources and views for a conversational UI backed by `ash_postgres` and `ash_oban`
-- `mix ash_ai.gen.chat.docs`
-- `mix ash_ai.gen.mcp` - Sets up an MCP server for your application
-- `mix ash_ai.gen.mcp.docs`
-- `mix ash_ai.gen.usage_rules`
-- `mix ash_ai.gen.usage_rules.docs`
-- `mix ash_ai.install` - Installs `AshAi`. Call with `mix igniter.install ash_ai`. Requires igniter to run.
-- `mix ash_ai.install.docs`
 - `mix ash_json_api.install` - Installs AshJsonApi. Should be run with `mix igniter.install ash_json_api`
 - `mix ash_json_api.routes` - Prints all routes by AshJsonApiRouter
 <!-- usage-rules-skill-end -->

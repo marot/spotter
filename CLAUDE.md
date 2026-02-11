@@ -6,6 +6,8 @@ Ash, Phoenix, LiveView, xterm.js, tmux
 
 The prototype runs on localhost, and has no authentication.
 
+This project is greenfield. No legacy fallbacks, backwards compatability or similar is needed.
+
 # Worktrees
 
 ## Daily workflow
