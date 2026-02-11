@@ -1,7 +1,7 @@
 defmodule SpotterWeb.PaneViewLive do
   use Phoenix.LiveView
 
-  alias Spotter.Services.{SessionRegistry, TranscriptRenderer, Tmux}
+  alias Spotter.Services.{SessionRegistry, Tmux, TranscriptRenderer}
   alias Spotter.Transcripts.{Annotation, Message, Session}
   require Ash.Query
 
