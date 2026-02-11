@@ -1,4 +1,5 @@
 defmodule Spotter.Transcripts.Subagent do
+  @moduledoc "A subagent spawned within a Claude Code session."
   use Ash.Resource,
     domain: Spotter.Transcripts,
     data_layer: AshSqlite.DataLayer,

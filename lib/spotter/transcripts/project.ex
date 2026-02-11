@@ -1,4 +1,5 @@
 defmodule Spotter.Transcripts.Project do
+  @moduledoc "A configured project whose transcripts are synced."
   use Ash.Resource,
     domain: Spotter.Transcripts,
     data_layer: AshSqlite.DataLayer,

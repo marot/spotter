@@ -1,4 +1,5 @@
 defmodule Spotter.Transcripts do
+  @moduledoc "Domain for indexing and querying Claude Code session transcripts."
   use Ash.Domain,
     extensions: [
       AshJsonApi.Domain

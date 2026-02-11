@@ -1,4 +1,5 @@
 defmodule Spotter.Transcripts.Session do
+  @moduledoc "A Claude Code session within a project."
   use Ash.Resource,
     domain: Spotter.Transcripts,
     data_layer: AshSqlite.DataLayer,

@@ -39,20 +39,46 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
           "transcripts_dir" => transcripts_dir
         }
       }) do
-    pattern = Regex.compile!(pattern_str)
+    start_time = System.monotonic_time(:millisecond)
+    broadcast({:sync_started, %{project: name}})
 
-    # Upsert project
-    project = upsert_project!(name, pattern_str)
+    try do
+      pattern = Regex.compile!(pattern_str)
 
-    # Find matching transcript directories
-    dirs = list_matching_dirs(transcripts_dir, pattern)
-    Logger.info("Syncing project #{name}: found #{length(dirs)} matching directories")
+      # Upsert project
+      project = upsert_project!(name, pattern_str)
 
-    for dir <- dirs do
-      sync_directory(project, dir)
+      # Find matching transcript directories
+      dirs = list_matching_dirs(transcripts_dir, pattern)
+      Logger.info("Syncing project #{name}: found #{length(dirs)} matching directories")
+
+      sessions_synced =
+        Enum.reduce(dirs, 0, fn dir, acc ->
+          acc + sync_directory(project, dir)
+        end)
+
+      duration_ms = System.monotonic_time(:millisecond) - start_time
+
+      broadcast(
+        {:sync_completed,
+         %{
+           project: name,
+           dirs_synced: length(dirs),
+           sessions_synced: sessions_synced,
+           duration_ms: duration_ms
+         }}
+      )
+
+      :ok
+    rescue
+      e ->
+        broadcast({:sync_error, %{project: name, error: Exception.message(e)}})
+        reraise e, __STACKTRACE__
     end
+  end
 
-    :ok
+  defp broadcast(message) do
+    Phoenix.PubSub.broadcast(Spotter.PubSub, "sync:progress", message)
   end
 
   defp upsert_project!(name, pattern) do
@@ -80,13 +106,17 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
   end
 
   defp sync_directory(project, dir) do
-    # Sync session JSONL files
-    dir
-    |> Path.join("*.jsonl")
-    |> Path.wildcard()
-    |> Enum.each(fn file ->
+    # Sync session JSONL files, return count of sessions synced
+    files =
+      dir
+      |> Path.join("*.jsonl")
+      |> Path.wildcard()
+
+    Enum.each(files, fn file ->
       sync_session_file(project, dir, file)
     end)
+
+    length(files)
   end
 
   defp sync_session_file(project, dir, file) do

@@ -1,9 +1,12 @@
 defmodule Spotter.Transcripts.ResourcesTest do
   use ExUnit.Case, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Spotter.Repo
+
   setup do
     # Reset DB for each test
-    Ecto.Adapters.SQL.Sandbox.checkout(Spotter.Repo)
+    Sandbox.checkout(Repo)
   end
 
   describe "Project" do
