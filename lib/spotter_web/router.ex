@@ -31,5 +31,6 @@ defmodule SpotterWeb.Router do
     live("/", PaneListLive)
     live("/debug", DebugTerminalLive)
     live("/sessions/:session_id", SessionLive)
+    live("/projects/:project_id/review", ProjectReviewLive)
   end
 end

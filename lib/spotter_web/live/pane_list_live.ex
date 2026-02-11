@@ -302,6 +302,12 @@ defmodule SpotterWeb.PaneListLive do
                   ({length(project.visible_sessions)} sessions)
                 </span>
               </h3>
+              <a
+                href={"/projects/#{project.id}/review"}
+                style="padding: 0.2rem 0.6rem; background: #1a4a6b; border-radius: 4px; color: #64b5f6; text-decoration: none; font-size: 0.8em;"
+              >
+                Review
+              </a>
               <.sync_indicator status={Map.get(@sync_status, project.name)} stats={Map.get(@sync_stats, project.name)} />
             </div>
 
