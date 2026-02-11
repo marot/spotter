@@ -133,4 +133,67 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
       refute html =~ "closed one"
     end
   end
+
+  describe "close_review_session" do
+    test "closes all open annotations and shows count" do
+      {project, session} = create_project_with_session()
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "first",
+        comment: "a"
+      })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "second",
+        comment: "b"
+      })
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+
+      html = render_click(view, "close_review_session")
+
+      assert html =~ "Closed 2 annotations"
+      assert html =~ "No open annotations for this project."
+    end
+
+    test "shows zero count when no open annotations exist" do
+      {project, _session} = create_project_with_session()
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+
+      html = render_click(view, "close_review_session")
+
+      assert html =~ "Closed 0 annotations"
+    end
+
+    test "does not affect already-closed annotations" do
+      {project, session} = create_project_with_session()
+
+      ann =
+        Ash.create!(Annotation, %{
+          session_id: session.id,
+          selected_text: "already closed",
+          comment: "done"
+        })
+
+      Ash.update!(ann, %{}, action: :close)
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "still open",
+        comment: "wip"
+      })
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+
+      html = render_click(view, "close_review_session")
+
+      assert html =~ "Closed 1 annotations"
+    end
+  end
 end

@@ -18,6 +18,37 @@ defmodule SpotterWeb.ProjectReviewLive do
     end
   end
 
+  @impl true
+  def handle_event("close_review_session", _params, socket) do
+    project = socket.assigns.project
+
+    sessions =
+      Session
+      |> Ash.Query.filter(project_id == ^project.id)
+      |> Ash.Query.select([:id])
+      |> Ash.read!()
+
+    session_ids = Enum.map(sessions, & &1.id)
+
+    closed_count =
+      if session_ids == [] do
+        0
+      else
+        Annotation
+        |> Ash.Query.filter(session_id in ^session_ids and state == :open)
+        |> Ash.read!()
+        |> Enum.reduce(0, fn ann, acc ->
+          Ash.update!(ann, %{}, action: :close)
+          acc + 1
+        end)
+      end
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Closed #{closed_count} annotations")
+     |> load_review_data()}
+  end
+
   defp load_review_data(socket) do
     project = socket.assigns.project
 
@@ -71,6 +102,10 @@ defmodule SpotterWeb.ProjectReviewLive do
         <% end %>
       </div>
 
+      <div :if={Phoenix.Flash.get(@flash, :info)} style="background: #1a3a1a; color: #4ade80; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9em;">
+        {Phoenix.Flash.get(@flash, :info)}
+      </div>
+
       <%= if is_nil(@project) do %>
         <p style="color: #888; font-style: italic;">
           The requested project does not exist.
@@ -81,8 +116,16 @@ defmodule SpotterWeb.ProjectReviewLive do
             No open annotations for this project.
           </p>
         <% else %>
-          <div style="margin-bottom: 0.5rem; color: #888; font-size: 0.9em;">
-            {length(@open_annotations)} open annotations across {map_size(@sessions_by_id)} sessions
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
+            <span style="color: #888; font-size: 0.9em;">
+              {length(@open_annotations)} open annotations across {map_size(@sessions_by_id)} sessions
+            </span>
+            <button
+              phx-click="close_review_session"
+              style="padding: 0.3rem 0.8rem; background: #6b1a1a; border: none; border-radius: 4px; color: #f87171; cursor: pointer; font-size: 0.8em;"
+            >
+              Close review session
+            </button>
           </div>
 
           <%= for ann <- @open_annotations do %>
