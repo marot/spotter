@@ -11,7 +11,8 @@ defmodule Spotter.MixProject do
       consolidate_protocols: Mix.env() != :dev,
       aliases: aliases(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      usage_rules: usage_rules()
+      usage_rules: usage_rules(),
+      listeners: [Phoenix.CodeReloader]
     ]
   end
 

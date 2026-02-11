@@ -50,7 +50,8 @@ bd sync               # Sync with git
 ```
 
 ## Merging a NAME worktree
-Use git rebase NAME
+Rebase the target branch onto main (not main onto target branch)
+Merge the target branch with fast-forward 
 Afterwards cleanup the branch and worktree (git gtr rm NAME) 
 Cleanup tmux session: tmux kill-session -t spotter-NAME
 
