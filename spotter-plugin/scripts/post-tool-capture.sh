@@ -10,6 +10,7 @@ trap 'exit 0' ERR
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 [ -f "${LIB_DIR}/trace_context.sh" ] && . "${LIB_DIR}/trace_context.sh"
+[ -f "${LIB_DIR}/hook_timeouts.sh" ] && . "${LIB_DIR}/hook_timeouts.sh"
 
 INPUT="$(cat)"
 
@@ -47,8 +48,8 @@ post_snapshot() {
     -H "x-spotter-hook-event: ${HOOK_EVENT:-PostToolUse}"
     -H "x-spotter-hook-script: post-tool-capture.sh"
     -d "$json"
-    --connect-timeout 2
-    --max-time 5
+    --connect-timeout "$(resolve_timeout "${SPOTTER_POST_TOOL_CONNECT_TIMEOUT:-}" "${SPOTTER_HOOK_CONNECT_TIMEOUT:-}" "$SPOTTER_DEFAULT_CONNECT_TIMEOUT")"
+    --max-time "$(resolve_timeout "${SPOTTER_POST_TOOL_MAX_TIME:-}" "${SPOTTER_HOOK_MAX_TIME:-}" "$SPOTTER_DEFAULT_MAX_TIME")"
   )
   # Add traceparent header if available
   [ -n "${TRACEPARENT:-}" ] && curl_args+=(-H "traceparent: ${TRACEPARENT}")
@@ -201,8 +202,8 @@ case "$TOOL_NAME" in
         -H "x-spotter-hook-event: ${HOOK_EVENT:-PostToolUse}"
         -H "x-spotter-hook-script: post-tool-capture.sh"
         -d "$COMMIT_JSON"
-        --connect-timeout 0.1
-        --max-time 0.3
+        --connect-timeout "$(resolve_timeout "${SPOTTER_POST_TOOL_CONNECT_TIMEOUT:-}" "${SPOTTER_HOOK_CONNECT_TIMEOUT:-}" "$SPOTTER_DEFAULT_CONNECT_TIMEOUT")"
+        --max-time "$(resolve_timeout "${SPOTTER_POST_TOOL_MAX_TIME:-}" "${SPOTTER_HOOK_MAX_TIME:-}" "$SPOTTER_DEFAULT_MAX_TIME")"
       )
       # Add traceparent header if available
       [ -n "${TRACEPARENT:-}" ] && commit_curl_args+=(-H "traceparent: ${TRACEPARENT}")

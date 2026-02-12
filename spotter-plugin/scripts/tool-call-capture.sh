@@ -10,6 +10,7 @@ trap 'exit 0' ERR
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 [ -f "${LIB_DIR}/trace_context.sh" ] && . "${LIB_DIR}/trace_context.sh"
+[ -f "${LIB_DIR}/hook_timeouts.sh" ] && . "${LIB_DIR}/hook_timeouts.sh"
 
 INPUT="$(cat)"
 
@@ -62,8 +63,8 @@ CURL_ARGS=(
   -H "x-spotter-hook-event: ${HOOK_EVENT:-PostToolUse}"
   -H "x-spotter-hook-script: tool-call-capture.sh"
   -d "$JSON"
-  --connect-timeout 2
-  --max-time 5
+  --connect-timeout "$(resolve_timeout "${SPOTTER_TOOL_CALL_CONNECT_TIMEOUT:-}" "${SPOTTER_HOOK_CONNECT_TIMEOUT:-}" "$SPOTTER_DEFAULT_CONNECT_TIMEOUT")"
+  --max-time "$(resolve_timeout "${SPOTTER_TOOL_CALL_MAX_TIME:-}" "${SPOTTER_HOOK_MAX_TIME:-}" "$SPOTTER_DEFAULT_MAX_TIME")"
 )
 
 # Add traceparent header if available

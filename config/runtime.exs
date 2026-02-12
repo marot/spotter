@@ -8,11 +8,13 @@ import Config
 # ANTHROPIC_API_KEY - required for LLM-based summaries
 
 if config_env() == :prod do
-  config :spotter, Spotter.Repo, pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
+  alias Spotter.Config.EnvParser
+
+  config :spotter, Spotter.Repo, pool_size: EnvParser.parse_pool_size(System.get_env("POOL_SIZE"))
 
   # Configure OpenTelemetry exporter from environment
   # Default to OTLP for production; can be overridden with OTEL_EXPORTER
-  exporter = String.to_atom(System.get_env("OTEL_EXPORTER") || "otlp")
+  exporter = EnvParser.parse_otel_exporter(System.get_env("OTEL_EXPORTER"))
 
   config :opentelemetry,
     span_processor: :batch,

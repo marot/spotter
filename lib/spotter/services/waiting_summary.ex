@@ -181,8 +181,21 @@ defmodule Spotter.Services.WaitingSummary do
 
   defp configured_budget do
     case System.get_env("SPOTTER_SUMMARY_TOKEN_BUDGET") do
-      nil -> @default_budget
-      val -> String.to_integer(val)
+      nil ->
+        @default_budget
+
+      val ->
+        case Integer.parse(String.trim(val)) do
+          {int, ""} when int > 0 ->
+            int
+
+          _ ->
+            Logger.warning(
+              "Invalid SPOTTER_SUMMARY_TOKEN_BUDGET #{inspect(val)}, falling back to #{@default_budget}"
+            )
+
+            @default_budget
+        end
     end
   end
 

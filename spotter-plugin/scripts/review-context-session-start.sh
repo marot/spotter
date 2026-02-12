@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Source shared timeout helper (fail silently if unavailable)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/lib"
+[ -f "${LIB_DIR}/hook_timeouts.sh" ] && . "${LIB_DIR}/hook_timeouts.sh"
+
 # Only run in review mode
 if [ "${SPOTTER_REVIEW_MODE:-}" != "1" ]; then
   exit 0
@@ -23,8 +28,8 @@ PORT="${SPOTTER_PORT:-1100}"
 RESPONSE="$(curl -s \
   "http://127.0.0.1:${PORT}/api/review-context/${TOKEN}" \
   -H "Accept: application/json" \
-  --connect-timeout 2 \
-  --max-time 10 \
+  --connect-timeout "$(resolve_timeout "${SPOTTER_REVIEW_CONTEXT_CONNECT_TIMEOUT:-}" "${SPOTTER_HOOK_CONNECT_TIMEOUT:-}" "$SPOTTER_DEFAULT_CONNECT_TIMEOUT")" \
+  --max-time "$(resolve_timeout "${SPOTTER_REVIEW_CONTEXT_MAX_TIME:-}" "${SPOTTER_HOOK_MAX_TIME:-}" "$SPOTTER_DEFAULT_MAX_TIME")" \
   2>/dev/null)" || exit 0
 
 # Extract context field from response

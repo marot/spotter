@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 [ -f "${LIB_DIR}/trace_context.sh" ] && . "${LIB_DIR}/trace_context.sh"
+[ -f "${LIB_DIR}/hook_timeouts.sh" ] && . "${LIB_DIR}/hook_timeouts.sh"
 
 # Read the session JSON from stdin
 INPUT="$(cat)"
@@ -43,8 +44,8 @@ CURL_ARGS=(
   -H "x-spotter-hook-event: SessionStart"
   -H "x-spotter-hook-script: notify-session.sh"
   -d "{\"session_id\": \"${SESSION_ID}\", \"pane_id\": \"${TMUX_PANE}\", \"cwd\": \"${CWD}\"}"
-  --connect-timeout 2
-  --max-time 4
+  --connect-timeout "$(resolve_timeout "${SPOTTER_NOTIFY_CONNECT_TIMEOUT:-}" "${SPOTTER_HOOK_CONNECT_TIMEOUT:-}" "$SPOTTER_DEFAULT_CONNECT_TIMEOUT")"
+  --max-time "$(resolve_timeout "${SPOTTER_NOTIFY_MAX_TIME:-}" "${SPOTTER_HOOK_MAX_TIME:-}" "$SPOTTER_DEFAULT_MAX_TIME")"
 )
 
 # Add traceparent header if available

@@ -17,13 +17,7 @@ defmodule Spotter.Services.Tmux do
 
     case System.cmd("tmux", ["list-panes", "-a", "-F", format], stderr_to_stdout: true) do
       {output, 0} ->
-        panes =
-          output
-          |> String.split("\n", trim: true)
-          |> Enum.map(&parse_pane_line/1)
-          |> Enum.uniq_by(& &1.pane_id)
-
-        {:ok, panes}
+        {:ok, parse_list_panes_output(output)}
 
       {output, _} ->
         {:error, String.trim(output)}
@@ -194,18 +188,33 @@ defmodule Spotter.Services.Tmux do
 
   defp pf(field), do: "\#{#{field}}\t"
 
+  @doc false
+  def parse_list_panes_output(output) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.map(&parse_pane_line/1)
+    |> Enum.uniq_by(& &1.pane_id)
+  end
+
   defp parse_pane_line(line) do
     parts = String.split(line, "\t")
 
     %{
       pane_id: Enum.at(parts, 0, ""),
       session_name: Enum.at(parts, 1, ""),
-      window_index: Enum.at(parts, 2, "0") |> String.to_integer(),
-      pane_index: Enum.at(parts, 3, "0") |> String.to_integer(),
+      window_index: parts |> Enum.at(2, "") |> parse_int_or_default(0),
+      pane_index: parts |> Enum.at(3, "") |> parse_int_or_default(0),
       pane_title: Enum.at(parts, 4, ""),
-      pane_width: Enum.at(parts, 5, "80") |> String.to_integer(),
-      pane_height: Enum.at(parts, 6, "24") |> String.to_integer(),
+      pane_width: parts |> Enum.at(5, "") |> parse_int_or_default(0),
+      pane_height: parts |> Enum.at(6, "") |> parse_int_or_default(0),
       pane_current_command: Enum.at(parts, 7, "") |> String.trim()
     }
+  end
+
+  defp parse_int_or_default(value, default) do
+    case Integer.parse(String.trim(value)) do
+      {int, ""} -> int
+      _ -> default
+    end
   end
 end
