@@ -53,7 +53,7 @@ defmodule SpotterWeb.OtelTraceHelpers do
   """
   @spec put_trace_response_header(Plug.Conn.t()) :: Plug.Conn.t()
   def put_trace_response_header(conn) do
-    case get_current_trace_id() do
+    case current_trace_id() do
       nil -> conn
       trace_id -> put_resp_header(conn, "x-spotter-trace-id", trace_id)
     end
@@ -82,10 +82,11 @@ defmodule SpotterWeb.OtelTraceHelpers do
     :ok
   end
 
-  # Private helpers
-
-  @spec get_current_trace_id() :: String.t() | nil
-  defp get_current_trace_id do
+  @doc """
+  Return the current trace ID as a hex string, or nil if no trace is active.
+  """
+  @spec current_trace_id() :: String.t() | nil
+  def current_trace_id do
     span_ctx = Tracer.current_span_ctx()
 
     case :otel_span.hex_trace_id(span_ctx) do

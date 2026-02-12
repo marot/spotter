@@ -197,16 +197,27 @@ defmodule SpotterWeb.HooksController do
   end
 
   defp enqueue_enrichment(hashes, session) when hashes != [] do
-    %{
-      commit_hashes: hashes,
-      session_id: session.session_id,
-      git_cwd: session.cwd || "."
-    }
+    args =
+      %{
+        commit_hashes: hashes,
+        session_id: session.session_id,
+        git_cwd: session.cwd || "."
+      }
+      |> maybe_add_trace_id()
+
+    args
     |> EnrichCommits.new()
     |> Oban.insert()
   end
 
   defp enqueue_enrichment(_, _), do: :ok
+
+  defp maybe_add_trace_id(args) do
+    case OtelTraceHelpers.current_trace_id() do
+      nil -> args
+      trace_id -> Map.put(args, :otel_trace_id, trace_id)
+    end
+  end
 
   defp validate_hashes(hashes) do
     cond do

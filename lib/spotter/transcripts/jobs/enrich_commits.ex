@@ -5,18 +5,26 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
 
   require Logger
   require Ash.Query
+  require OpenTelemetry.Tracer, as: Tracer
 
   alias Spotter.Services.SessionCommitLinker
   alias Spotter.Transcripts.{Commit, Session}
 
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{
-          "commit_hashes" => hashes,
-          "session_id" => session_id,
-          "git_cwd" => git_cwd
-        }
-      }) do
+  def perform(%Oban.Job{args: args}) do
+    %{
+      "commit_hashes" => hashes,
+      "session_id" => session_id,
+      "git_cwd" => git_cwd
+    } = args
+
+    Tracer.with_span "spotter.enrich_commits.perform" do
+      set_span_attributes(hashes, session_id, args["otel_trace_id"])
+      do_perform(hashes, session_id, git_cwd)
+    end
+  end
+
+  defp do_perform(hashes, session_id, git_cwd) do
     commits = enrich_commits(hashes, git_cwd)
 
     case find_session(session_id) do
@@ -28,6 +36,17 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
     end
 
     :ok
+  end
+
+  defp set_span_attributes(hashes, session_id, parent_trace_id) do
+    Tracer.set_attribute("spotter.commit_hash_count", length(hashes))
+    Tracer.set_attribute("spotter.session_id", session_id)
+
+    if is_binary(parent_trace_id) and parent_trace_id != "" do
+      Tracer.set_attribute("spotter.parent_trace_id", parent_trace_id)
+    end
+  rescue
+    _error -> :ok
   end
 
   defp enrich_commits(hashes, git_cwd) do
@@ -46,8 +65,15 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
     else
       _ ->
         Logger.debug("EnrichCommits: could not enrich #{hash}")
+        set_enrich_error(hash)
         :error
     end
+  end
+
+  defp set_enrich_error(hash) do
+    Tracer.add_event("enrich_commit_failed", [{"spotter.commit_hash", hash}])
+  rescue
+    _error -> :ok
   end
 
   defp git_show(hash, cwd) do

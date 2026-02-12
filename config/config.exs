@@ -9,6 +9,9 @@ config :opentelemetry,
 config :ash,
   tracer: [OpentelemetryAsh]
 
+config :opentelemetry_ash,
+  trace_types: [:custom, :action, :flow]
+
 config :ash_oban, pro?: false
 
 config :spotter, Oban,
