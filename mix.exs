@@ -85,6 +85,13 @@ defmodule Spotter.MixProject do
 
   defp aliases() do
     [
+      setup: ["deps.get", "cmd --cd assets npm ci"],
+      "assets.build": ["cmd --cd assets npm ci", "cmd --cd assets node build.js"],
+      "assets.deploy": [
+        "cmd --cd assets npm ci",
+        "cmd --cd assets node build.js",
+        "phx.digest"
+      ],
       test: ["ash.setup --quiet", "test"],
       quality: ["credo", "dialyzer", "deps.audit"]
     ]
