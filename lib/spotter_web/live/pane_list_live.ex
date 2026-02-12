@@ -319,33 +319,30 @@ defmodule SpotterWeb.PaneListLive do
   def render(assigns) do
     ~H"""
     <div class="container">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-        <h1>Spotter - Tmux Panes</h1>
-        <div style="display: flex; gap: 0.5rem;">
-          <a href="/debug" style="padding: 0.4rem 0.8rem; background: #2d4a2d; border-radius: 4px; color: #7ec87e; text-decoration: none; font-size: 0.85rem;">
-            Debug Terminal
-          </a>
-          <button phx-click="refresh">Refresh</button>
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <div class="page-header-actions">
+          <button class="btn" phx-click="refresh">Refresh</button>
         </div>
       </div>
 
       <%!-- Session Transcripts Section --%>
-      <div style="margin-bottom: 2rem;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-          <h2 style="color: #a0d0f0; margin: 0;">Session Transcripts</h2>
-          <button phx-click="sync_transcripts">Sync</button>
+      <div class="mb-4">
+        <div class="page-header">
+          <h2 class="section-heading">Session Transcripts</h2>
+          <button class="btn" phx-click="sync_transcripts">Sync</button>
         </div>
 
         <%= if @session_data_projects == [] do %>
-          <div class="empty-state" style="padding: 1rem; color: #888;">
+          <div class="empty-state">
             No projects synced yet. Click Sync to start.
           </div>
         <% else %>
-          <div :if={length(@session_data_projects) > 1} style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+          <div :if={length(@session_data_projects) > 1} class="filter-bar">
             <button
               phx-click={event(:project_filter, :filter_project)}
               phx-value-project-id="all"
-              style={"padding: 0.4rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @project_filter_selected_project_id == nil, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @project_filter_selected_project_id == nil, do: " is-active"}"}
             >
               All ({Enum.sum(Enum.map(@session_data_projects, &length(&1.visible_sessions)))})
             </button>
@@ -353,31 +350,32 @@ defmodule SpotterWeb.PaneListLive do
               :for={project <- @session_data_projects}
               phx-click={event(:project_filter, :filter_project)}
               phx-value-project-id={project.id}
-              style={"padding: 0.4rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @project_filter_selected_project_id == project.id, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @project_filter_selected_project_id == project.id, do: " is-active"}"}
             >
               {project.name} ({length(project.visible_sessions)})
             </button>
           </div>
 
-          <div :for={project <- @session_data_projects} :if={@project_filter_selected_project_id == nil or @project_filter_selected_project_id == project.id} style="margin-bottom: 1.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.25rem;">
-              <h3 style="margin: 0; color: #ccc;">
-                {project.name}
-                <span style="color: #666; font-weight: normal; font-size: 0.85em;">
+          <div
+            :for={project <- @session_data_projects}
+            :if={@project_filter_selected_project_id == nil or @project_filter_selected_project_id == project.id}
+            class="project-section"
+          >
+            <div class="project-header">
+              <h3>
+                <span class="project-name">{project.name}</span>
+                <span class="project-count">
                   ({length(project.visible_sessions)} sessions)
                 </span>
               </h3>
-              <a
-                href={"/projects/#{project.id}/review"}
-                style="padding: 0.2rem 0.6rem; background: #1a4a6b; border-radius: 4px; color: #64b5f6; text-decoration: none; font-size: 0.8em;"
-              >
+              <a href={"/projects/#{project.id}/review"} class="btn btn-ghost text-xs">
                 Review
               </a>
               <.sync_indicator status={Map.get(@sync_status, project.name)} stats={Map.get(@sync_stats, project.name)} />
             </div>
 
             <%= if project.visible_sessions == [] and project.hidden_sessions == [] do %>
-              <div style="padding: 0.5rem; color: #666; font-size: 0.9em;">No sessions yet.</div>
+              <div class="text-muted text-sm">No sessions yet.</div>
             <% else %>
               <%= if project.visible_sessions != [] do %>
                 <table>
@@ -397,7 +395,7 @@ defmodule SpotterWeb.PaneListLive do
                       <tr>
                         <td>
                           <div>{SessionPresenter.primary_label(session)}</div>
-                          <div style="font-size: 0.75em; color: #888;">{SessionPresenter.secondary_label(session)}</div>
+                          <div class="text-muted text-xs">{SessionPresenter.secondary_label(session)}</div>
                         </td>
                         <td>{session.git_branch || "—"}</td>
                         <td>
@@ -406,7 +404,7 @@ defmodule SpotterWeb.PaneListLive do
                             <span
                               phx-click="toggle_subagents"
                               phx-value-session-id={session.id}
-                              style="color: #b39ddb; font-size: 0.75em; margin-left: 0.3rem; cursor: pointer;"
+                              class="subagent-toggle"
                             >
                               {length(subagents)} agents
                               <%= if Map.get(@expanded_subagents, session.id, false), do: "▼", else: "▶" %>
@@ -417,7 +415,7 @@ defmodule SpotterWeb.PaneListLive do
                           <% stats = Map.get(@tool_call_stats_stats, session.id) %>
                           <%= cond do %>
                             <% stats && stats.total > 0 && stats.failed > 0 -> %>
-                              <span>{stats.total}</span> <span style="color: #f87171;">({stats.failed} failed)</span>
+                              <span>{stats.total}</span> <span class="text-error">({stats.failed} failed)</span>
                             <% stats && stats.total > 0 -> %>
                               <span>{stats.total}</span>
                             <% true -> %>
@@ -428,40 +426,29 @@ defmodule SpotterWeb.PaneListLive do
                           <% started = SessionPresenter.started_display(session.started_at) %>
                           <%= if started do %>
                             <div>{started.relative}</div>
-                            <div style="font-size: 0.75em; color: #888;">{started.absolute}</div>
+                            <div class="text-muted text-xs">{started.absolute}</div>
                           <% else %>
                             —
                           <% end %>
                         </td>
-                        <td style="display: flex; gap: 0.3rem;">
-                          <button
-                            phx-click="review_session"
-                            phx-value-session-id={session.session_id}
-                            style="padding: 0.2rem 0.6rem; background: #2d4a2d; border: none; border-radius: 4px; color: #7ec87e; cursor: pointer; font-size: 0.8em;"
-                          >
+                        <td class="flex gap-1">
+                          <button class="btn btn-success" phx-click="review_session" phx-value-session-id={session.session_id}>
                             Review
                           </button>
-                          <button
-                            phx-click="hide_session"
-                            phx-value-id={session.id}
-                            style="padding: 0.2rem 0.5rem; background: #4a3a2d; border: none; border-radius: 4px; color: #d4a574; cursor: pointer; font-size: 0.8em;"
-                          >
+                          <button class="btn" phx-click="hide_session" phx-value-id={session.id}>
                             Hide
                           </button>
                         </td>
                       </tr>
                       <%= if Map.get(@expanded_subagents, session.id, false) do %>
-                        <tr :for={sa <- subagents} style="opacity: 0.8; font-size: 0.9em;">
-                          <td style="padding-left: 2rem;">{sa.slug || String.slice(sa.agent_id, 0, 7)}</td>
+                        <tr :for={sa <- subagents} class="subagent-row">
+                          <td>{sa.slug || String.slice(sa.agent_id, 0, 7)}</td>
                           <td></td>
                           <td>{sa.message_count || 0}</td>
                           <td></td>
                           <td>{relative_time(sa.started_at)}</td>
                           <td>
-                            <a
-                              href={"/sessions/#{session.session_id}/agents/#{sa.agent_id}"}
-                              style="padding: 0.2rem 0.6rem; background: #2d4a2d; border-radius: 4px; color: #7ec87e; text-decoration: none; font-size: 0.8em;"
-                            >
+                            <a href={"/sessions/#{session.session_id}/agents/#{sa.agent_id}"} class="btn btn-success">
                               View
                             </a>
                           </td>
@@ -471,13 +458,13 @@ defmodule SpotterWeb.PaneListLive do
                   </tbody>
                 </table>
                 <%= if project.visible_has_more do %>
-                  <div style="text-align: center; margin-top: 0.5rem;">
+                  <div class="load-more">
                     <button
+                      class="btn"
                       phx-click="load_more_sessions"
                       phx-value-project-id={project.id}
                       phx-value-visibility="visible"
                       phx-disable-with="Loading..."
-                      style="padding: 0.3rem 0.8rem; background: #1a3a52; border: 1px solid #2a4a6a; border-radius: 4px; color: #64b5f6; cursor: pointer; font-size: 0.8em;"
                     >
                       Load more sessions ({length(project.visible_sessions)} shown)
                     </button>
@@ -486,11 +473,11 @@ defmodule SpotterWeb.PaneListLive do
               <% end %>
 
               <%= if project.hidden_sessions != [] do %>
-                <div style="margin-top: 0.5rem;">
+                <div class="mt-2">
                   <button
+                    class="hidden-toggle"
                     phx-click="toggle_hidden_section"
                     phx-value-project-id={project.id}
-                    style="background: none; border: none; color: #888; cursor: pointer; font-size: 0.85em; padding: 0.2rem 0;"
                   >
                     <%= if Map.get(@hidden_expanded, project.id, false) do %>
                       ▼ Hidden sessions ({length(project.hidden_sessions)})
@@ -500,7 +487,7 @@ defmodule SpotterWeb.PaneListLive do
                   </button>
 
                   <%= if Map.get(@hidden_expanded, project.id, false) do %>
-                    <table style="opacity: 0.7;">
+                    <table class="hidden-table">
                       <thead>
                         <tr>
                           <th>Session</th>
@@ -517,7 +504,7 @@ defmodule SpotterWeb.PaneListLive do
                           <tr>
                             <td>
                               <div>{SessionPresenter.primary_label(session)}</div>
-                              <div style="font-size: 0.75em; color: #888;">{SessionPresenter.secondary_label(session)}</div>
+                              <div class="text-muted text-xs">{SessionPresenter.secondary_label(session)}</div>
                             </td>
                             <td>{session.git_branch || "—"}</td>
                             <td>
@@ -526,7 +513,7 @@ defmodule SpotterWeb.PaneListLive do
                                 <span
                                   phx-click="toggle_subagents"
                                   phx-value-session-id={session.id}
-                                  style="color: #b39ddb; font-size: 0.75em; margin-left: 0.3rem; cursor: pointer;"
+                                  class="subagent-toggle"
                                 >
                                   {length(subagents)} agents
                                   <%= if Map.get(@expanded_subagents, session.id, false), do: "▼", else: "▶" %>
@@ -537,7 +524,7 @@ defmodule SpotterWeb.PaneListLive do
                               <% stats = Map.get(@tool_call_stats_stats, session.id) %>
                               <%= cond do %>
                                 <% stats && stats.total > 0 && stats.failed > 0 -> %>
-                                  <span>{stats.total}</span> <span style="color: #f87171;">({stats.failed} failed)</span>
+                                  <span>{stats.total}</span> <span class="text-error">({stats.failed} failed)</span>
                                 <% stats && stats.total > 0 -> %>
                                   <span>{stats.total}</span>
                                 <% true -> %>
@@ -546,27 +533,20 @@ defmodule SpotterWeb.PaneListLive do
                             </td>
                             <td>{relative_time(session.hidden_at)}</td>
                             <td>
-                              <button
-                                phx-click="unhide_session"
-                                phx-value-id={session.id}
-                                style="padding: 0.2rem 0.5rem; background: #2d4a2d; border: none; border-radius: 4px; color: #7ec87e; cursor: pointer; font-size: 0.8em;"
-                              >
+                              <button class="btn btn-success" phx-click="unhide_session" phx-value-id={session.id}>
                                 Unhide
                               </button>
                             </td>
                           </tr>
                           <%= if Map.get(@expanded_subagents, session.id, false) do %>
-                            <tr :for={sa <- subagents} style="opacity: 0.8; font-size: 0.9em;">
-                              <td style="padding-left: 2rem;">{sa.slug || String.slice(sa.agent_id, 0, 7)}</td>
+                            <tr :for={sa <- subagents} class="subagent-row">
+                              <td>{sa.slug || String.slice(sa.agent_id, 0, 7)}</td>
                               <td></td>
                               <td>{sa.message_count || 0}</td>
                               <td></td>
                               <td>{relative_time(sa.started_at)}</td>
                               <td>
-                                <a
-                                  href={"/sessions/#{session.session_id}/agents/#{sa.agent_id}"}
-                                  style="padding: 0.2rem 0.6rem; background: #2d4a2d; border-radius: 4px; color: #7ec87e; text-decoration: none; font-size: 0.8em;"
-                                >
+                                <a href={"/sessions/#{session.session_id}/agents/#{sa.agent_id}"} class="btn btn-success">
                                   View
                                 </a>
                               </td>
@@ -576,13 +556,13 @@ defmodule SpotterWeb.PaneListLive do
                       </tbody>
                     </table>
                     <%= if project.hidden_has_more do %>
-                      <div style="text-align: center; margin-top: 0.5rem;">
+                      <div class="load-more">
                         <button
+                          class="btn"
                           phx-click="load_more_sessions"
                           phx-value-project-id={project.id}
                           phx-value-visibility="hidden"
                           phx-disable-with="Loading..."
-                          style="padding: 0.3rem 0.8rem; background: #1a3a52; border: 1px solid #2a4a6a; border-radius: 4px; color: #64b5f6; cursor: pointer; font-size: 0.8em;"
                         >
                           Load more hidden ({length(project.hidden_sessions)} shown)
                         </button>
@@ -597,19 +577,19 @@ defmodule SpotterWeb.PaneListLive do
       </div>
 
       <%= if @claude_panes != [] do %>
-        <h2 style="color: #d4a574; margin-bottom: 0.5rem;">Claude Code Sessions</h2>
-        <.pane_table panes={@claude_panes} badge="claude" />
+        <h2 class="section-heading">Claude Code Sessions</h2>
+        <.pane_table panes={@claude_panes} badge="agent" />
       <% end %>
 
       <%= if @panes != [] do %>
-        <h2 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Other Panes</h2>
-        <.pane_table panes={@panes} badge="other" />
+        <h2 class="section-heading mt-4">Other Panes</h2>
+        <.pane_table panes={@panes} badge="terminal" />
       <% end %>
 
       <%= if @panes == [] and @claude_panes == [] and not @loading do %>
         <div class="empty-state">
           <p>No tmux panes found.</p>
-          <p style="margin-top: 0.5rem;">Make sure tmux is running with active sessions.</p>
+          <p class="mt-2 text-muted">Make sure tmux is running with active sessions.</p>
         </div>
       <% end %>
     </div>
@@ -621,7 +601,7 @@ defmodule SpotterWeb.PaneListLive do
 
   defp sync_indicator(%{status: :syncing} = assigns) do
     ~H"""
-    <span style="color: #f0c040; font-size: 0.85em; animation: pulse 1.5s infinite;">syncing...</span>
+    <span class="sync-syncing">syncing...</span>
     """
   end
 
@@ -629,7 +609,7 @@ defmodule SpotterWeb.PaneListLive do
     assigns = assign(assigns, :stats, stats)
 
     ~H"""
-    <span style="color: #4ade80; font-size: 0.85em;">
+    <span class="sync-completed">
       ✓ {@stats.dirs_synced} dirs, {@stats.sessions_synced} sessions in {@stats.duration_ms}ms
     </span>
     """
@@ -639,7 +619,7 @@ defmodule SpotterWeb.PaneListLive do
     assigns = assign(assigns, :stats, stats)
 
     ~H"""
-    <span style="color: #f87171; font-size: 0.85em;">✗ {@stats.error}</span>
+    <span class="sync-error">✗ {@stats.error}</span>
     """
   end
 

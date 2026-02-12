@@ -47,9 +47,10 @@ Hooks.Terminal = {
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       scrollback: 10000,
       theme: {
-        background: "#1a1a2e",
-        foreground: "#e0e0e0",
-        cursor: "#64b5f6",
+        background: "#0c0e14",
+        foreground: "#e8eaf0",
+        cursor: "#5b9cf5",
+        selectionBackground: "rgba(91, 156, 245, 0.3)",
       },
     })
 
@@ -206,10 +207,10 @@ Hooks.Terminal = {
     }
 
     const typeColors = {
-      tool_use: "#f0c674",
-      user: "#7ec8e3",
-      result: "#81c784",
-      text: "#ce93d8",
+      tool_use: "#e5a84b",
+      user: "#5b9cf5",
+      result: "#4ac89a",
+      text: "#a78bfa",
     }
 
     const counts = {}
@@ -294,8 +295,8 @@ Hooks.TranscriptSelection = {
         .filter(Boolean)
 
       els.forEach((el) => {
-        el.style.background = "#2a3a5c"
-        el.style.borderLeft = "2px solid #f0c674"
+        el.style.background = "rgba(91, 156, 245, 0.15)"
+        el.style.borderLeft = "2px solid var(--accent-amber)"
       })
 
       if (els.length > 0) {

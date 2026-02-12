@@ -5,35 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={Plug.CSRFProtection.get_csrf_token()} />
     <title>Spotter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/xterm.css" />
     <link rel="stylesheet" href="/assets/spotter.css" />
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; }
-      .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
-      h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-      a { color: #64b5f6; text-decoration: none; }
-      a:hover { text-decoration: underline; }
-      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-      th, td { padding: 0.5rem 1rem; text-align: left; border-bottom: 1px solid #333; }
-      th { color: #999; font-weight: 600; }
-      tr:hover { background: #16213e; }
-      .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
-      .badge-claude { background: #d4a574; color: #1a1a2e; }
-      .badge-other { background: #444; }
-      button { padding: 0.4rem 1rem; border: 1px solid #444; border-radius: 4px; background: #16213e; color: #e0e0e0; cursor: pointer; }
-      button:hover { background: #1a1a3e; }
-      .empty-state { text-align: center; padding: 3rem; color: #666; }
-      .header { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 1rem; background: #16213e; }
-    </style>
     <script defer src="/assets/app.js">
     </script>
   </head>
   <body>
-    <nav style="display: flex; gap: 1rem; padding: 0.5rem 1rem; background: #16213e; border-bottom: 1px solid #333; font-size: 0.9em;">
-      <a href="/" style="color: #e0e0e0; text-decoration: none;">Dashboard</a>
-      <a href="/history" style="color: #e0e0e0; text-decoration: none;">History</a>
-    </nav>
-    <%= @inner_content %>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-logo">S</div>
+          <span class="sidebar-title">Spotter</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a href="/" class="sidebar-link" data-nav-path="/">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+            Dashboard
+          </a>
+          <a href="/history" class="sidebar-link" data-nav-path="/history">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><polyline points="8,4 8,8 11,10"/></svg>
+            History
+          </a>
+        </nav>
+      </aside>
+      <main class="main-content">
+        <%= @inner_content %>
+      </main>
+    </div>
+    <script>
+      (function() {
+        var path = window.location.pathname;
+        document.querySelectorAll('.sidebar-link').forEach(function(link) {
+          var navPath = link.getAttribute('data-nav-path');
+          if (navPath === '/' ? path === '/' : path.startsWith(navPath)) {
+            link.classList.add('is-active');
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

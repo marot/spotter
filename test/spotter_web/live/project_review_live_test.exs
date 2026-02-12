@@ -6,6 +6,7 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
+  alias Spotter.TestSupport.FakeTmux
   alias Spotter.Transcripts.{Annotation, Message, Project, Session}
 
   @endpoint SpotterWeb.Endpoint
@@ -221,13 +222,13 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
     @table :review_session_registry
 
     setup do
-      Spotter.TestSupport.FakeTmux.start_link()
-      Application.put_env(:spotter, :tmux_module, Spotter.TestSupport.FakeTmux)
+      FakeTmux.start_link()
+      Application.put_env(:spotter, :tmux_module, FakeTmux)
 
       on_exit(fn ->
         Application.delete_env(:spotter, :tmux_module)
         Application.delete_env(:spotter, :fake_tmux_launch_result)
-        Spotter.TestSupport.FakeTmux.stop()
+        FakeTmux.stop()
       end)
     end
 

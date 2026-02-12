@@ -142,55 +142,48 @@ defmodule SpotterWeb.ProjectReviewLive do
   defp source_badge(:transcript), do: "Transcript"
   defp source_badge(_), do: "Terminal"
 
-  defp source_badge_color(:transcript), do: "background: #1a4a6b;"
-  defp source_badge_color(_), do: "background: #4a3a1a;"
+  defp source_badge_class(:transcript), do: "badge badge-agent"
+  defp source_badge_class(_), do: "badge badge-terminal"
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="container">
-      <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
-        <a href="/" style="color: #64b5f6; text-decoration: none;">&larr; Back</a>
-        <%= if @project do %>
-          <h1 style="margin: 0;">Review: {@project.name}</h1>
-        <% else %>
-          <h1 style="margin: 0;">Project not found</h1>
-        <% end %>
+      <div class="breadcrumb">
+        <a href="/">Dashboard</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">
+          <%= if @project, do: "Review: #{@project.name}", else: "Project not found" %>
+        </span>
       </div>
 
-      <div :if={Phoenix.Flash.get(@flash, :info)} style="background: #1a3a1a; color: #4ade80; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9em;">
+      <div :if={Phoenix.Flash.get(@flash, :info)} class="flash-info">
         {Phoenix.Flash.get(@flash, :info)}
       </div>
 
-      <div :if={Phoenix.Flash.get(@flash, :error)} style="background: #3a1a1a; color: #f87171; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9em;">
+      <div :if={Phoenix.Flash.get(@flash, :error)} class="flash-error">
         {Phoenix.Flash.get(@flash, :error)}
       </div>
 
       <%= if is_nil(@project) do %>
-        <p style="color: #888; font-style: italic;">
+        <div class="empty-state">
           The requested project does not exist.
-        </p>
+        </div>
       <% else %>
         <%= if @open_annotations == [] do %>
-          <p style="color: #666; font-style: italic;">
+          <div class="empty-state">
             No open annotations for this project.
-          </p>
+          </div>
         <% else %>
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-            <span style="color: #888; font-size: 0.9em;">
+          <div class="review-header">
+            <span class="review-count">
               {length(@open_annotations)} open annotations across {map_size(@sessions_by_id)} sessions
             </span>
-            <div style="display: flex; gap: 0.5rem;">
-              <button
-                phx-click="open_conversation"
-                style="padding: 0.3rem 0.8rem; background: #1a3a1a; border: none; border-radius: 4px; color: #4ade80; cursor: pointer; font-size: 0.8em;"
-              >
+            <div class="review-actions">
+              <button class="btn btn-success" phx-click="open_conversation">
                 Open conversation
               </button>
-              <button
-                phx-click="close_review_session"
-                style="padding: 0.3rem 0.8rem; background: #6b1a1a; border: none; border-radius: 4px; color: #f87171; cursor: pointer; font-size: 0.8em;"
-              >
+              <button class="btn btn-danger" phx-click="close_review_session">
                 Close review session
               </button>
             </div>
@@ -198,29 +191,25 @@ defmodule SpotterWeb.ProjectReviewLive do
 
           <%= for ann <- @open_annotations do %>
             <% session = Map.get(@sessions_by_id, ann.session_id) %>
-            <div style="background: #1a1a2e; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem;">
-              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
-                <span style={"color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px; #{source_badge_color(ann.source)}"}>
+            <div class="annotation-card">
+              <div class="flex items-center gap-2 mb-2">
+                <span class={source_badge_class(ann.source)}>
                   {source_badge(ann.source)}
                 </span>
-                <span :if={ann.source == :transcript && ann.message_refs != []} style="color: #666; font-size: 0.7em;">
+                <span :if={ann.source == :transcript && ann.message_refs != []} class="text-muted text-xs">
                   {length(ann.message_refs)} messages
                 </span>
-                <span :if={session} style="color: #555; font-size: 0.7em;">
+                <span :if={session} class="text-muted text-xs">
                   {session_label(session)}
                 </span>
               </div>
-              <pre style="margin: 0 0 0.5rem 0; color: #a0a0a0; white-space: pre-wrap; font-size: 0.8em; max-height: 60px; overflow-y: auto;"><%= ann.selected_text %></pre>
-              <p style="margin: 0; color: #e0e0e0; font-size: 0.9em;"><%= ann.comment %></p>
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
-                <span style="font-size: 0.75em; color: #555;">
+              <pre class="annotation-text"><%= ann.selected_text %></pre>
+              <p class="annotation-comment"><%= ann.comment %></p>
+              <div class="annotation-meta">
+                <span class="annotation-time">
                   <%= Calendar.strftime(ann.inserted_at, "%H:%M") %>
                 </span>
-                <a
-                  :if={session}
-                  href={"/sessions/#{session.session_id}"}
-                  style="color: #64b5f6; font-size: 0.8em; text-decoration: none;"
-                >
+                <a :if={session} href={"/sessions/#{session.session_id}"} class="text-xs">
                   View session
                 </a>
               </div>

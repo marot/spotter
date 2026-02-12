@@ -134,30 +134,25 @@ defmodule SpotterWeb.HistoryLive do
     "Inferred #{round(confidence * 100)}%"
   end
 
-  defp badge_style(:observed_in_session),
-    do:
-      "background: #1a4a2d; color: #4ade80; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.75em; margin-right: 0.25rem;"
-
-  defp badge_style(_),
-    do:
-      "background: #3a3a1a; color: #d4c474; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.75em; margin-right: 0.25rem;"
+  defp badge_class(:observed_in_session), do: "badge badge-verified"
+  defp badge_class(_), do: "badge badge-inferred"
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="container">
-      <h1>Commit History</h1>
+      <div class="page-header">
+        <h1>Commit History</h1>
+      </div>
 
-      <div style="display: flex; gap: 2rem; margin-bottom: 1rem; flex-wrap: wrap;">
+      <div class="filter-section">
         <div>
-          <label style="display: block; color: #aaa; font-size: 0.85em; margin-bottom: 0.25rem;">
-            Project
-          </label>
-          <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+          <label class="filter-label">Project</label>
+          <div class="filter-bar">
             <button
               phx-click="filter_project"
               phx-value-project-id="all"
-              style={"padding: 0.3rem 0.6rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @selected_project_id == nil, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @selected_project_id == nil, do: " is-active"}"}
             >
               All
             </button>
@@ -165,7 +160,7 @@ defmodule SpotterWeb.HistoryLive do
               :for={project <- @projects}
               phx-click="filter_project"
               phx-value-project-id={project.id}
-              style={"padding: 0.3rem 0.6rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @selected_project_id == project.id, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @selected_project_id == project.id, do: " is-active"}"}
             >
               {project.name}
             </button>
@@ -173,14 +168,12 @@ defmodule SpotterWeb.HistoryLive do
         </div>
 
         <div>
-          <label style="display: block; color: #aaa; font-size: 0.85em; margin-bottom: 0.25rem;">
-            Branch
-          </label>
-          <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+          <label class="filter-label">Branch</label>
+          <div class="filter-bar">
             <button
               phx-click="filter_branch"
               phx-value-branch="all"
-              style={"padding: 0.3rem 0.6rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @selected_branch == nil, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @selected_branch == nil, do: " is-active"}"}
             >
               All
             </button>
@@ -188,7 +181,7 @@ defmodule SpotterWeb.HistoryLive do
               :for={branch <- @branches}
               phx-click="filter_branch"
               phx-value-branch={branch}
-              style={"padding: 0.3rem 0.6rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em; color: #e0e0e0; background: #{if @selected_branch == branch, do: "#1a6b3c", else: "#333"};"}
+              class={"filter-btn#{if @selected_branch == branch, do: " is-active"}"}
             >
               {branch}
             </button>
@@ -197,54 +190,45 @@ defmodule SpotterWeb.HistoryLive do
       </div>
 
       <%= if @rows == [] do %>
-        <div style="padding: 2rem; color: #888; text-align: center;">
+        <div class="empty-state">
           No commits found for the selected filters.
         </div>
       <% else %>
-        <div :for={row <- @rows} style="border: 1px solid #333; border-radius: 6px; margin-bottom: 0.75rem; padding: 0.75rem;">
-          <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem;">
-            <code style="color: #f0c040; font-size: 0.9em;">
+        <div :for={row <- @rows} class="history-commit-card">
+          <div class="history-commit-header">
+            <code class="history-commit-hash">
               {String.slice(row.commit.commit_hash, 0, 8)}
             </code>
-            <span style="flex: 1; color: #e0e0e0;">
+            <span class="history-commit-subject">
               {row.commit.subject || "(no subject)"}
             </span>
-            <span style="color: #888; font-size: 0.85em;">
+            <span class="history-commit-branch">
               {row.commit.git_branch || "\u2014"}
             </span>
-            <span style="color: #666; font-size: 0.8em;">
+            <span class="history-commit-time">
               {format_timestamp(row.commit.committed_at || row.commit.inserted_at)}
             </span>
           </div>
 
-          <div :for={entry <- row.sessions} style="margin-left: 1.5rem; padding: 0.4rem 0; border-top: 1px solid #2a2a2a;">
-            <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-              <a
-                href={"/sessions/#{entry.session.session_id}"}
-                style="color: #64b5f6; text-decoration: none; font-size: 0.9em;"
-              >
-                {entry.session.slug || String.slice(to_string(entry.session.session_id), 0, 8)}
-              </a>
-              <span style="color: #888; font-size: 0.8em;">
-                {entry.project.name}
-              </span>
-              <span style="color: #666; font-size: 0.8em;">
-                {format_timestamp(entry.session.started_at || entry.session.inserted_at)}
-              </span>
-              <span :for={link_type <- entry.link_types} style={badge_style(link_type)}>
-                {badge_text(link_type, entry.max_confidence)}
-              </span>
-            </div>
+          <div :for={entry <- row.sessions} class="history-session-entry">
+            <a href={"/sessions/#{entry.session.session_id}"} class="history-session-link">
+              {entry.session.slug || String.slice(to_string(entry.session.session_id), 0, 8)}
+            </a>
+            <span class="history-session-project">
+              {entry.project.name}
+            </span>
+            <span class="text-muted text-xs">
+              {format_timestamp(entry.session.started_at || entry.session.inserted_at)}
+            </span>
+            <span :for={link_type <- entry.link_types} class={badge_class(link_type)}>
+              {badge_text(link_type, entry.max_confidence)}
+            </span>
           </div>
         </div>
 
         <%= if @has_more do %>
-          <div style="text-align: center; margin: 1rem 0;">
-            <button
-              phx-click="load_more"
-              phx-disable-with="Loading..."
-              style="padding: 0.4rem 1rem; background: #1a3a52; border: 1px solid #2a4a6a; border-radius: 4px; color: #64b5f6; cursor: pointer;"
-            >
+          <div class="load-more">
+            <button class="btn btn-primary" phx-click="load_more" phx-disable-with="Loading...">
               Load more
             </button>
           </div>

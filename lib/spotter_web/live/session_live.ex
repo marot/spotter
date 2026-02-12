@@ -73,7 +73,8 @@ defmodule SpotterWeb.SessionLive do
         breakpoint_map: breakpoint_map,
         anchors: anchors,
         show_debug: false,
-        clicked_subagent: nil
+        clicked_subagent: nil,
+        active_sidebar_tab: :commits
       )
 
     socket = push_sync_events(socket)
@@ -272,6 +273,10 @@ defmodule SpotterWeb.SessionLive do
     {:noreply, assign(socket, clicked_subagent: ref)}
   end
 
+  def handle_event("switch_sidebar_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, active_sidebar_tab: String.to_existing_atom(tab))}
+  end
+
   defp compute_sync_data(nil, _rendered_lines), do: {[], []}
 
   defp compute_sync_data(pane_id, rendered_lines) do
@@ -442,22 +447,26 @@ defmodule SpotterWeb.SessionLive do
   defp source_badge(:transcript), do: "Transcript"
   defp source_badge(_), do: "Terminal"
 
-  defp source_badge_color(:transcript), do: "background: #1a4a6b;"
-  defp source_badge_color(_), do: "background: #4a3a1a;"
+  defp source_badge_color(:transcript),
+    do: "background: rgba(91, 156, 245, 0.15); color: var(--accent-blue);"
+
+  defp source_badge_color(_),
+    do: "background: rgba(229, 168, 75, 0.15); color: var(--accent-amber);"
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="header">
-      <a href="/">&larr; Back</a>
-      <span>Session: {String.slice(@session_id, 0..7)}</span>
-      <span :if={@pane_id} style="color: #888; margin-left: 1rem; font-size: 0.85em;">
+    <div class="breadcrumb">
+      <a href="/">Dashboard</a>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">Session {String.slice(@session_id, 0..7)}</span>
+      <span :if={@pane_id} class="breadcrumb-meta">
         Pane: {@pane_id}
       </span>
     </div>
-    <div style="display: flex; gap: 0; height: calc(100vh - 50px);">
-      <div style="flex: 2; overflow-x: auto; padding: 1rem;">
-        <div style="display: inline-block; min-width: 100%;">
+    <div class="session-layout">
+      <div class="session-terminal">
+        <div class="session-terminal-inner">
           <%= if @pane_id do %>
             <div
               id="terminal"
@@ -466,25 +475,22 @@ defmodule SpotterWeb.SessionLive do
               data-cols={@cols}
               data-rows={@rows}
               phx-update="ignore"
-              style="display: inline-block;"
+              class="terminal-container"
             >
             </div>
           <% else %>
-            <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #888;">
-              <div style="text-align: center;">
-                <div style="font-size: 1.2em; margin-bottom: 0.5rem;">Connecting to session...</div>
-                <div style="color: #555; font-size: 0.9em;">Waiting for terminal to be ready</div>
+            <div class="terminal-connecting">
+              <div>
+                <div class="terminal-connecting-title">Connecting to session...</div>
+                <div class="terminal-connecting-subtitle">Waiting for terminal to be ready</div>
               </div>
             </div>
           <% end %>
         </div>
       </div>
-      <div
-        style="flex: 1; padding: 1rem; overflow-y: auto; border-left: 1px solid var(--transcript-border);"
-        id="transcript-panel"
-      >
-        <div style="display: flex; align-items: center; margin: 0 0 0.75rem 0;">
-          <h3 style="margin: 0;">Transcript</h3>
+      <div id="transcript-panel" class="session-transcript">
+        <div class="transcript-header">
+          <h3>Transcript</h3>
           <span class={"transcript-header-hint#{if @show_debug, do: " debug-active", else: ""}"}>
             {if @show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug"}
           </span>
@@ -534,7 +540,7 @@ defmodule SpotterWeb.SessionLive do
                   </span>
                 <% end %>
                 <%= if line[:render_mode] == :code do %>
-                  <pre class="row-text" style="margin:0;display:inline;"><code class={"language-#{line[:code_language] || "plaintext"}"}><%= line.line %></code></pre>
+                  <pre class="row-text row-text-code"><code class={"language-#{line[:code_language] || "plaintext"}"}><%= line.line %></code></pre>
                 <% else %>
                   <span class="row-text"><%= line.line %></span>
                 <% end %>
@@ -545,101 +551,126 @@ defmodule SpotterWeb.SessionLive do
           <p class="transcript-empty">No transcript available for this session.</p>
         <% end %>
       </div>
-      <div style="flex: 1; background: #16213e; padding: 1rem; overflow-y: auto; border-left: 1px solid #2a2a4a;">
-        <h3 style="margin: 0 0 0.75rem 0; color: #64b5f6;">Commits</h3>
+      <div class="session-sidebar">
+        <div class="sidebar-tabs">
+          <button
+            class={"sidebar-tab#{if @active_sidebar_tab == :commits, do: " is-active"}"}
+            phx-click="switch_sidebar_tab"
+            phx-value-tab="commits"
+          >
+            Commits ({length(@commit_links)})
+          </button>
+          <button
+            class={"sidebar-tab#{if @active_sidebar_tab == :annotations, do: " is-active"}"}
+            phx-click="switch_sidebar_tab"
+            phx-value-tab="annotations"
+          >
+            Annotations ({length(@annotations)})
+          </button>
+          <button
+            class={"sidebar-tab#{if @active_sidebar_tab == :errors, do: " is-active"}"}
+            phx-click="switch_sidebar_tab"
+            phx-value-tab="errors"
+          >
+            Errors ({length(@errors)})
+          </button>
+        </div>
 
-        <%= if @commit_links == [] do %>
-          <p style="color: #666; font-style: italic; font-size: 0.85em; margin-bottom: 1rem;">
-            No linked commits yet.
-          </p>
-        <% else %>
-          <div style="margin-bottom: 1rem;">
+        <%!-- Commits tab --%>
+        <div :if={@active_sidebar_tab == :commits} class="sidebar-tab-content">
+          <%= if @commit_links == [] do %>
+            <p class="text-muted text-sm">No linked commits yet.</p>
+          <% else %>
             <%= for %{link: link, commit: commit} <- @commit_links do %>
-              <div style="background: #1a1a2e; border-radius: 6px; padding: 0.6rem; margin-bottom: 0.4rem;">
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                  <code style="color: #f0c674; font-size: 0.85em;">
+              <div class="commit-card">
+                <div class="flex items-center gap-2">
+                  <code class="commit-hash">
                     <%= String.slice(commit.commit_hash, 0, 8) %>
                   </code>
                   <%= if link.link_type == :observed_in_session do %>
-                    <span style="background: #1a6b3c; color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px;">
-                      Verified
-                    </span>
+                    <span class="badge badge-verified">Verified</span>
                   <% else %>
-                    <span style="background: #6b4c1a; color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px;">
-                      Inferred <%= round(link.confidence * 100) %>%
-                    </span>
+                    <span class="badge badge-inferred">Inferred <%= round(link.confidence * 100) %>%</span>
                   <% end %>
                 </div>
-                <div style="color: #c0c0c0; font-size: 0.8em; margin-top: 0.25rem;">
+                <div class="commit-subject">
                   <%= commit.subject || "(no subject)" %>
                 </div>
-                <div :if={commit.git_branch} style="color: #666; font-size: 0.7em; margin-top: 0.15rem;">
+                <div :if={commit.git_branch} class="commit-branch">
                   <%= commit.git_branch %>
                 </div>
               </div>
             <% end %>
-          </div>
-        <% end %>
+          <% end %>
+        </div>
 
-        <h3 style="margin: 0 0 1rem 0; color: #64b5f6;">Annotations</h3>
-
-        <%= if @selected_text do %>
-          <div style="background: #1a1a2e; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
-            <div style="font-size: 0.8em; color: #888; margin-bottom: 0.5rem;">
-              {selection_label(@selection_source, @selection_message_ids)}
+        <%!-- Annotations tab --%>
+        <div :if={@active_sidebar_tab == :annotations} class="sidebar-tab-content">
+          <%= if @selected_text do %>
+            <div class="annotation-form">
+              <div class="annotation-form-hint">
+                {selection_label(@selection_source, @selection_message_ids)}
+              </div>
+              <pre class="annotation-form-preview"><%= @selected_text %></pre>
+              <form phx-submit="save_annotation">
+                <textarea
+                  name="comment"
+                  placeholder="Add a comment..."
+                  required
+                  class="annotation-form-textarea"
+                />
+                <div class="annotation-form-actions">
+                  <button type="submit" class="btn btn-success">Save</button>
+                  <button type="button" class="btn" phx-click="clear_selection">Cancel</button>
+                </div>
+              </form>
             </div>
-            <pre style="margin: 0 0 0.75rem 0; color: #e0e0e0; white-space: pre-wrap; font-size: 0.85em; max-height: 100px; overflow-y: auto;"><%= @selected_text %></pre>
-            <form phx-submit="save_annotation">
-              <textarea
-                name="comment"
-                placeholder="Add a comment..."
-                required
-                style="width: 100%; min-height: 60px; background: #0d1117; color: #e0e0e0; border: 1px solid #2a2a4a; border-radius: 4px; padding: 0.5rem; font-family: inherit; resize: vertical;"
-              />
-              <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                <button type="submit" style="background: #1a6b3c; color: #e0e0e0; border: none; border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer;">
-                  Save
-                </button>
-                <button type="button" phx-click="clear_selection" style="background: #333; color: #e0e0e0; border: none; border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer;">
-                  Cancel
+          <% end %>
+
+          <%= if @annotations == [] do %>
+            <p class="text-muted text-sm">Select text in terminal or transcript to add annotations.</p>
+          <% end %>
+
+          <%= for ann <- @annotations do %>
+            <div class="annotation-card" phx-click="highlight_annotation" phx-value-id={ann.id}>
+              <div class="flex items-center gap-2 mb-2">
+                <span style={"font-size: var(--text-xs); padding: 1px 6px; border-radius: 3px; #{source_badge_color(ann.source)}"}>
+                  {source_badge(ann.source)}
+                </span>
+                <span :if={ann.source == :transcript && ann.message_refs != []} class="text-muted text-xs">
+                  {length(ann.message_refs)} messages
+                </span>
+              </div>
+              <pre class="annotation-text"><%= ann.selected_text %></pre>
+              <p class="annotation-comment"><%= ann.comment %></p>
+              <div class="annotation-meta">
+                <span class="annotation-time"><%= Calendar.strftime(ann.inserted_at, "%H:%M") %></span>
+                <button class="btn-ghost text-error text-xs" phx-click="delete_annotation" phx-value-id={ann.id}>
+                  Delete
                 </button>
               </div>
-            </form>
-          </div>
-        <% end %>
+            </div>
+          <% end %>
+        </div>
 
-        <%= if @annotations == [] do %>
-          <p style="color: #666; font-style: italic;">Select text in terminal or transcript to add annotations.</p>
-        <% end %>
-
-        <%= for ann <- @annotations do %>
-          <div
-            style="background: #1a1a2e; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; cursor: pointer;"
-            phx-click="highlight_annotation"
-            phx-value-id={ann.id}
-          >
-            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
-              <span style={"color: #e0e0e0; font-size: 0.7em; padding: 1px 6px; border-radius: 3px; #{source_badge_color(ann.source)}"}>
-                {source_badge(ann.source)}
-              </span>
-              <span :if={ann.source == :transcript && ann.message_refs != []} style="color: #666; font-size: 0.7em;">
-                {length(ann.message_refs)} messages
+        <%!-- Errors tab --%>
+        <div :if={@active_sidebar_tab == :errors} class="sidebar-tab-content">
+          <%= if @errors == [] do %>
+            <p class="text-muted text-sm">No errors detected.</p>
+          <% else %>
+            <div
+              :for={error <- @errors}
+              phx-click="jump_to_error"
+              phx-value-tool-use-id={error.tool_use_id}
+              class="transcript-error-item"
+            >
+              <span class="error-tool">{error.tool_name}</span>
+              <span :if={error.error_content} class="error-content">
+                {String.slice(error.error_content, 0, 100)}
               </span>
             </div>
-            <pre style="margin: 0 0 0.5rem 0; color: #a0a0a0; white-space: pre-wrap; font-size: 0.8em; max-height: 60px; overflow-y: auto;"><%= ann.selected_text %></pre>
-            <p style="margin: 0; color: #e0e0e0; font-size: 0.9em;"><%= ann.comment %></p>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
-              <span style="font-size: 0.75em; color: #555;"><%= Calendar.strftime(ann.inserted_at, "%H:%M") %></span>
-              <button
-                phx-click="delete_annotation"
-                phx-value-id={ann.id}
-                style="background: none; border: none; color: #c0392b; cursor: pointer; font-size: 0.8em;"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        <% end %>
+          <% end %>
+        </div>
       </div>
     </div>
     """
@@ -701,9 +732,9 @@ defmodule SpotterWeb.SessionLive do
     if clicked == ref, do: ["is-subagent", "is-clicked"], else: ["is-subagent"]
   end
 
-  defp anchor_color(:tool_use), do: "#f0c674"
-  defp anchor_color(:user), do: "#7ec8e3"
-  defp anchor_color(:result), do: "#81c784"
-  defp anchor_color(:text), do: "#ce93d8"
-  defp anchor_color(_), do: "#888"
+  defp anchor_color(:tool_use), do: "var(--accent-amber)"
+  defp anchor_color(:user), do: "var(--accent-blue)"
+  defp anchor_color(:result), do: "var(--accent-green)"
+  defp anchor_color(:text), do: "var(--accent-purple)"
+  defp anchor_color(_), do: "var(--text-tertiary)"
 end
