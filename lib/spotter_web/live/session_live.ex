@@ -3,6 +3,7 @@ defmodule SpotterWeb.SessionLive do
 
   alias Spotter.Services.{
     ReviewSessionRegistry,
+    ReviewUpdates,
     SessionRegistry,
     Tmux,
     TranscriptRenderer,
@@ -199,6 +200,7 @@ defmodule SpotterWeb.SessionLive do
     case Ash.create(Annotation, params) do
       {:ok, annotation} ->
         create_message_refs(annotation, socket)
+        ReviewUpdates.broadcast_counts()
 
         {:noreply,
          socket
@@ -218,6 +220,7 @@ defmodule SpotterWeb.SessionLive do
     case Ash.get(Annotation, id) do
       {:ok, annotation} ->
         Ash.destroy!(annotation)
+        ReviewUpdates.broadcast_counts()
 
         {:noreply, assign(socket, annotations: load_annotations(socket.assigns.session_record))}
 

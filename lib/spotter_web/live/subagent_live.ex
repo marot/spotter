@@ -1,7 +1,7 @@
 defmodule SpotterWeb.SubagentLive do
   use Phoenix.LiveView
 
-  alias Spotter.Services.TranscriptRenderer
+  alias Spotter.Services.{ReviewUpdates, TranscriptRenderer}
 
   alias Spotter.Transcripts.{
     Annotation,
@@ -68,6 +68,7 @@ defmodule SpotterWeb.SubagentLive do
     case Ash.create(Annotation, params) do
       {:ok, annotation} ->
         create_message_refs(annotation, socket)
+        ReviewUpdates.broadcast_counts()
 
         {:noreply,
          socket
@@ -86,6 +87,7 @@ defmodule SpotterWeb.SubagentLive do
     case Ash.get(Annotation, id) do
       {:ok, annotation} ->
         Ash.destroy!(annotation)
+        ReviewUpdates.broadcast_counts()
         {:noreply, assign(socket, annotations: load_annotations(socket.assigns.subagent))}
 
       _ ->

@@ -7,7 +7,7 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
   alias Spotter.TestSupport.FakeTmux
-  alias Spotter.Transcripts.{Annotation, Message, Project, Session}
+  alias Spotter.Transcripts.{Annotation, Message, Project, Session, Subagent}
 
   @endpoint SpotterWeb.Endpoint
 
@@ -307,6 +307,48 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
       # No entries should have been registered for this test
       all_entries = :ets.tab2list(@table)
       refute Enum.any?(all_entries, fn {name, _} -> String.contains?(name, "project-test") end)
+    end
+  end
+
+  describe "subagent annotations" do
+    test "shows subagent badge and link for subagent-scoped annotation" do
+      {project, session} = create_project_with_session()
+
+      subagent =
+        Ash.create!(Subagent, %{
+          agent_id: "task-agent-xyz",
+          slug: "code-review",
+          session_id: session.id
+        })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        subagent_id: subagent.id,
+        selected_text: "subagent text",
+        comment: "from agent"
+      })
+
+      {:ok, _view, html} = live(build_conn(), reviews_path(project))
+
+      assert html =~ "Subagent"
+      assert html =~ "code-review"
+      assert html =~ "View agent"
+      assert html =~ "/sessions/#{session.session_id}/agents/task-agent-xyz"
+    end
+
+    test "session annotation does not show subagent badge" do
+      {project, session} = create_project_with_session()
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "main session",
+        comment: "no agent"
+      })
+
+      {:ok, _view, html} = live(build_conn(), reviews_path(project))
+
+      assert html =~ "View session"
+      refute html =~ "Subagent"
     end
   end
 end

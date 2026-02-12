@@ -1,7 +1,7 @@
 defmodule SpotterWeb.ProjectReviewLive do
   use Phoenix.LiveView
 
-  alias Spotter.Services.{ReviewSessionRegistry, ReviewTokenStore, Tmux}
+  alias Spotter.Services.{ReviewSessionRegistry, ReviewTokenStore, ReviewUpdates, Tmux}
   alias Spotter.Transcripts.{Annotation, Project, Session}
   require Ash.Query
 
@@ -52,6 +52,8 @@ defmodule SpotterWeb.ProjectReviewLive do
           acc + 1
         end)
       end
+
+    if closed_count > 0, do: ReviewUpdates.broadcast_counts()
 
     {:noreply,
      socket
@@ -125,7 +127,7 @@ defmodule SpotterWeb.ProjectReviewLive do
         |> Ash.Query.filter(session_id in ^session_ids and state == :open)
         |> Ash.Query.sort(inserted_at: :desc)
         |> Ash.read!()
-        |> Ash.load!(message_refs: :message)
+        |> Ash.load!([:subagent, message_refs: :message])
       end
 
     assign(socket,
@@ -144,6 +146,19 @@ defmodule SpotterWeb.ProjectReviewLive do
 
   defp source_badge_class(:transcript), do: "badge badge-agent"
   defp source_badge_class(_), do: "badge badge-terminal"
+
+  defp subagent_label(%{subagent: %{slug: slug}}) when is_binary(slug), do: slug
+  defp subagent_label(%{subagent: %{agent_id: aid}}), do: String.slice(aid, 0, 8)
+  defp subagent_label(_), do: nil
+
+  defp annotation_link(ann, session) do
+    case {ann.subagent_id, ann.subagent, session} do
+      {nil, _, %{session_id: sid}} -> "/sessions/#{sid}"
+      {_, %{agent_id: aid}, %{session_id: sid}} -> "/sessions/#{sid}/agents/#{aid}"
+      {_, _, %{session_id: sid}} -> "/sessions/#{sid}"
+      _ -> "#"
+    end
+  end
 
   @impl true
   def render(assigns) do
@@ -202,6 +217,14 @@ defmodule SpotterWeb.ProjectReviewLive do
                 <span :if={session} class="text-muted text-xs">
                   {session_label(session)}
                 </span>
+                <%= if subagent_label(ann) do %>
+                  <span class="badge badge-agent">Subagent</span>
+                  <span class="text-muted text-xs">{subagent_label(ann)}</span>
+                <% else %>
+                  <%= if ann.subagent_id do %>
+                    <span class="badge badge-agent">Subagent (missing)</span>
+                  <% end %>
+                <% end %>
               </div>
               <pre class="annotation-text"><%= ann.selected_text %></pre>
               <p class="annotation-comment"><%= ann.comment %></p>
@@ -209,8 +232,8 @@ defmodule SpotterWeb.ProjectReviewLive do
                 <span class="annotation-time">
                   <%= Calendar.strftime(ann.inserted_at, "%H:%M") %>
                 </span>
-                <a :if={session} href={"/sessions/#{session.session_id}"} class="text-xs">
-                  View session
+                <a :if={session} href={annotation_link(ann, session)} class="text-xs">
+                  <%= if ann.subagent_id && ann.subagent, do: "View agent", else: "View session" %>
                 </a>
               </div>
             </div>

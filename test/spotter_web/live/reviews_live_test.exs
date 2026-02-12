@@ -6,7 +6,7 @@ defmodule SpotterWeb.ReviewsLiveTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
-  alias Spotter.Transcripts.{Annotation, Project, Session}
+  alias Spotter.Transcripts.{Annotation, Project, Session, Subagent}
 
   @endpoint SpotterWeb.Endpoint
 
@@ -215,13 +215,83 @@ defmodule SpotterWeb.ReviewsLiveTest do
       html = html_response(conn, 200)
 
       assert html =~ "sidebar-badge"
+      assert html =~ "data-reviews-badge"
+      refute html =~ "display:none;"
     end
 
     test "hides badge when count is zero" do
       conn = build_conn() |> get("/reviews")
       html = html_response(conn, 200)
 
-      refute html =~ "sidebar-badge"
+      assert html =~ "data-reviews-badge"
+      assert html =~ "display:none;"
+    end
+  end
+
+  describe "subagent annotations" do
+    test "shows subagent badge and slug for subagent-scoped annotation" do
+      project = create_project("alpha")
+      session = create_session(project)
+
+      subagent =
+        Ash.create!(Subagent, %{
+          agent_id: "task-agent-abc",
+          slug: "task-runner",
+          session_id: session.id
+        })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        subagent_id: subagent.id,
+        selected_text: "agent output",
+        comment: "from subagent"
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/reviews?project_id=#{project.id}")
+
+      assert html =~ "Subagent"
+      assert html =~ "task-runner"
+      assert html =~ "View agent"
+      assert html =~ "/sessions/#{session.session_id}/agents/task-agent-abc"
+    end
+
+    test "shows short agent_id when slug is nil" do
+      project = create_project("alpha")
+      session = create_session(project)
+
+      subagent =
+        Ash.create!(Subagent, %{
+          agent_id: "abcdef1234567890",
+          session_id: session.id
+        })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        subagent_id: subagent.id,
+        selected_text: "agent output",
+        comment: "no slug"
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/reviews?project_id=#{project.id}")
+
+      assert html =~ "Subagent"
+      assert html =~ "abcdef12"
+    end
+
+    test "session annotation shows View session link" do
+      project = create_project("alpha")
+      session = create_session(project)
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "session text",
+        comment: "main session"
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/reviews?project_id=#{project.id}")
+
+      assert html =~ "View session"
+      refute html =~ "Subagent"
     end
   end
 end

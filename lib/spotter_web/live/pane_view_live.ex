@@ -1,7 +1,7 @@
 defmodule SpotterWeb.PaneViewLive do
   use Phoenix.LiveView
 
-  alias Spotter.Services.{SessionRegistry, Tmux, TranscriptRenderer}
+  alias Spotter.Services.{ReviewUpdates, SessionRegistry, Tmux, TranscriptRenderer}
   alias Spotter.Transcripts.{Annotation, Message, Session}
   require Ash.Query
 
@@ -110,6 +110,8 @@ defmodule SpotterWeb.PaneViewLive do
 
       case Ash.create(Annotation, params) do
         {:ok, _annotation} ->
+          ReviewUpdates.broadcast_counts()
+
           {:noreply,
            socket
            |> assign(
@@ -128,6 +130,7 @@ defmodule SpotterWeb.PaneViewLive do
     case Ash.get(Annotation, id) do
       {:ok, annotation} ->
         Ash.destroy!(annotation)
+        ReviewUpdates.broadcast_counts()
 
         {:noreply, assign(socket, annotations: load_annotations(socket.assigns.session_id))}
 
