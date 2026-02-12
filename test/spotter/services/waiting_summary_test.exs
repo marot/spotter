@@ -74,6 +74,43 @@ defmodule Spotter.Services.WaitingSummaryTest do
     end
   end
 
+  describe "generate/2 missing API key regression" do
+    setup do
+      prev_app = Application.get_env(:langchain, :anthropic_key)
+      prev_env = System.get_env("ANTHROPIC_API_KEY")
+
+      Application.delete_env(:langchain, :anthropic_key)
+      System.delete_env("ANTHROPIC_API_KEY")
+
+      on_exit(fn ->
+        if prev_app,
+          do: Application.put_env(:langchain, :anthropic_key, prev_app),
+          else: Application.delete_env(:langchain, :anthropic_key)
+
+        if prev_env,
+          do: System.put_env("ANTHROPIC_API_KEY", prev_env),
+          else: System.delete_env("ANTHROPIC_API_KEY")
+      end)
+
+      :ok
+    end
+
+    test "returns fallback summary and does not produce x-api-key error" do
+      import ExUnit.CaptureLog
+
+      path = Path.join(@fixtures_dir, "short.jsonl")
+
+      log =
+        capture_log(fn ->
+          assert {:ok, result} = WaitingSummary.generate(path)
+          assert is_binary(result.summary)
+          assert result.summary =~ "waiting"
+        end)
+
+      refute log =~ "x-api-key header is required"
+    end
+  end
+
   describe "build_fallback_summary/2" do
     test "includes session id prefix" do
       summary = WaitingSummary.build_fallback_summary("abc12345-full-id", [])

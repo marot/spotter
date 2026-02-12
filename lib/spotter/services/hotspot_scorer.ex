@@ -7,6 +7,7 @@ defmodule Spotter.Services.HotspotScorer do
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
+  alias Spotter.Services.LlmCredentials
 
   @max_lines 500
   @rubric_factors ~w(complexity duplication error_handling test_coverage change_risk)
@@ -44,7 +45,9 @@ defmodule Spotter.Services.HotspotScorer do
       Tracer.set_attribute("spotter.input_lines", input_lines)
       Tracer.set_attribute("spotter.input_truncated", truncated)
 
-      with {:ok, llm} <- build_llm(model),
+      with {:ok, api_key} <- LlmCredentials.anthropic_api_key(),
+           _ = Tracer.set_attribute("spotter.anthropic_key_present", true),
+           {:ok, llm} <- build_llm(model, api_key),
            {:ok, response} <- run_chain(llm, relative_path, content) do
         case parse_response(response) do
           {:ok, _} = result ->
@@ -55,6 +58,11 @@ defmodule Spotter.Services.HotspotScorer do
             error
         end
       else
+        {:error, :missing_api_key} = error ->
+          Tracer.set_attribute("spotter.anthropic_key_present", false)
+          Tracer.set_status(:error, "missing_api_key")
+          error
+
         {:error, reason} = error ->
           Tracer.set_status(:error, "chain_error: #{inspect(reason)}")
           error
@@ -62,12 +70,13 @@ defmodule Spotter.Services.HotspotScorer do
     end
   end
 
-  defp build_llm(model) do
+  defp build_llm(model, api_key) do
     ChatAnthropic.new(%{
       model: model,
       stream: false,
       max_tokens: 256,
-      temperature: 0.0
+      temperature: 0.0,
+      api_key: api_key
     })
   end
 

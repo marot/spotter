@@ -10,6 +10,7 @@ defmodule Spotter.Services.WaitingSummary do
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message, as: LangMessage
+  alias Spotter.Services.LlmCredentials
   alias Spotter.Services.WaitingSummary.SliceBuilder
   alias Spotter.Transcripts.JsonlParser
 
@@ -82,6 +83,13 @@ defmodule Spotter.Services.WaitingSummary do
   defp call_llm([], _model), do: {:error, :no_messages}
 
   defp call_llm(messages, model) do
+    case LlmCredentials.anthropic_api_key() do
+      {:error, :missing_api_key} -> {:error, :missing_api_key}
+      {:ok, api_key} -> call_llm_with_key(messages, model, api_key)
+    end
+  end
+
+  defp call_llm_with_key(messages, model, api_key) do
     input_text =
       Enum.map_join(messages, "\n", &SliceBuilder.message_text/1)
 
@@ -101,7 +109,7 @@ defmodule Spotter.Services.WaitingSummary do
           model: model,
           max_tokens: 200,
           temperature: 0.0,
-          api_key: anthropic_api_key()
+          api_key: api_key
         })
 
       {:ok, chain} = LLMChain.new(%{llm: llm})
@@ -197,9 +205,5 @@ defmodule Spotter.Services.WaitingSummary do
             @default_budget
         end
     end
-  end
-
-  defp anthropic_api_key do
-    System.get_env("ANTHROPIC_API_KEY") || ""
   end
 end

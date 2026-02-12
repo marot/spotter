@@ -25,6 +25,51 @@ defmodule Spotter.Transcripts.Jobs.ScoreHotspotsTest do
     })
   end
 
+  describe "perform/1 missing API key preflight" do
+    setup do
+      prev_app = Application.get_env(:langchain, :anthropic_key)
+      prev_env = System.get_env("ANTHROPIC_API_KEY")
+
+      Application.delete_env(:langchain, :anthropic_key)
+      System.delete_env("ANTHROPIC_API_KEY")
+
+      on_exit(fn ->
+        if prev_app,
+          do: Application.put_env(:langchain, :anthropic_key, prev_app),
+          else: Application.delete_env(:langchain, :anthropic_key)
+
+        if prev_env,
+          do: System.put_env("ANTHROPIC_API_KEY", prev_env),
+          else: System.delete_env("ANTHROPIC_API_KEY")
+      end)
+
+      :ok
+    end
+
+    test "returns :ok with warning and no CodeHotspot rows when key is missing" do
+      import ExUnit.CaptureLog
+
+      project = create_project("hotspot-no-key")
+      valid_cwd = System.tmp_dir!()
+      create_session(project, cwd: valid_cwd)
+
+      log =
+        capture_log(fn ->
+          assert :ok = ScoreHotspots.perform(%Oban.Job{args: %{"project_id" => project.id}})
+        end)
+
+      assert log =~ "missing Anthropic API key"
+      assert log =~ project.id
+
+      hotspots =
+        Spotter.Transcripts.CodeHotspot
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!()
+
+      assert hotspots == []
+    end
+  end
+
   describe "resolve_repo_path fallback" do
     test "skips when no sessions exist for project" do
       project = create_project("hotspot-no-sessions")

@@ -60,6 +60,15 @@ Only links with `confidence >= 0.60` are persisted.
 - Squash merges may require inference and can be low-confidence
 - Git-only in V1; no GitHub/GitLab API integration
 
+## Anthropic API key (AI hotspots / waiting summary)
+
+LLM-powered features (hotspot scoring, waiting summary) use the Anthropic API via LangChain.
+
+- **Environment variable**: `ANTHROPIC_API_KEY`
+- **LangChain app config**: `:langchain, :anthropic_key` (wired in `config/runtime.exs`)
+- **Resolution order**: app config first, then system env fallback
+- **Fail-safe**: when the key is missing or blank, LLM features degrade gracefully (deterministic fallback summaries, scoring skipped) without crashing workers or making outbound API calls
+
 ## Local E2E (Docker + Playwright + Live Claude)
 
 Spotter includes a local-only E2E harness that runs:

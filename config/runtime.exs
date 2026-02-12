@@ -7,6 +7,9 @@ import Config
 # SPOTTER_OVERLAY_HEIGHT - tmux popup height in lines (default: 16)
 # ANTHROPIC_API_KEY - required for LLM-based summaries
 
+# LangChain consumes :langchain, :anthropic_key for ChatAnthropic API calls
+config :langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY")
+
 if config_env() == :prod do
   alias Spotter.Config.EnvParser
 

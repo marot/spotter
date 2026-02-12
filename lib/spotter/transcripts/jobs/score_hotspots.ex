@@ -10,7 +10,7 @@ defmodule Spotter.Transcripts.Jobs.ScoreHotspots do
   require Ash.Query
   require OpenTelemetry.Tracer, as: Tracer
 
-  alias Spotter.Services.HotspotScorer
+  alias Spotter.Services.{HotspotScorer, LlmCredentials}
   alias Spotter.Transcripts.{CodeHotspot, FileHeatmap, Session}
 
   @top_n 20
@@ -20,33 +20,55 @@ defmodule Spotter.Transcripts.Jobs.ScoreHotspots do
     Tracer.with_span "spotter.score_hotspots.perform" do
       Tracer.set_attribute("spotter.project_id", project_id)
 
-      case resolve_repo_path(project_id) do
-        {:ok, repo_path} ->
-          entries = top_heatmap_entries(project_id)
-          Tracer.set_attribute("spotter.hotspot.entries_total", length(entries))
+      case LlmCredentials.anthropic_api_key() do
+        {:error, :missing_api_key} ->
+          Tracer.set_attribute("spotter.anthropic_key_present", false)
+          set_zero_counters()
 
-          Logger.info("ScoreHotspots: scoring #{length(entries)} files for project #{project_id}")
-
-          counters = score_entries(project_id, repo_path, entries)
-
-          Tracer.set_attribute("spotter.hotspot.scored_count", counters.scored)
-          Tracer.set_attribute("spotter.hotspot.read_skipped_count", counters.read_skipped)
-          Tracer.set_attribute("spotter.hotspot.score_failed_count", counters.score_failed)
-          Tracer.set_attribute("spotter.hotspot.persist_failed_count", counters.persist_failed)
-          :ok
-
-        :skip ->
-          Tracer.set_attribute("spotter.hotspot.entries_total", 0)
-          Tracer.set_attribute("spotter.hotspot.scored_count", 0)
-          Tracer.set_attribute("spotter.hotspot.read_skipped_count", 0)
-          Tracer.set_attribute("spotter.hotspot.score_failed_count", 0)
-          Tracer.set_attribute("spotter.hotspot.persist_failed_count", 0)
-
-          Logger.warning("ScoreHotspots: no accessible repo for project #{project_id}, skipping")
+          Logger.warning(
+            "ScoreHotspots: missing Anthropic API key for project #{project_id}, skipping scoring"
+          )
 
           :ok
+
+        {:ok, _key} ->
+          Tracer.set_attribute("spotter.anthropic_key_present", true)
+          perform_scoring(project_id)
       end
     end
+  end
+
+  defp perform_scoring(project_id) do
+    case resolve_repo_path(project_id) do
+      {:ok, repo_path} ->
+        entries = top_heatmap_entries(project_id)
+        Tracer.set_attribute("spotter.hotspot.entries_total", length(entries))
+
+        Logger.info("ScoreHotspots: scoring #{length(entries)} files for project #{project_id}")
+
+        counters = score_entries(project_id, repo_path, entries)
+
+        Tracer.set_attribute("spotter.hotspot.scored_count", counters.scored)
+        Tracer.set_attribute("spotter.hotspot.read_skipped_count", counters.read_skipped)
+        Tracer.set_attribute("spotter.hotspot.score_failed_count", counters.score_failed)
+        Tracer.set_attribute("spotter.hotspot.persist_failed_count", counters.persist_failed)
+        :ok
+
+      :skip ->
+        set_zero_counters()
+
+        Logger.warning("ScoreHotspots: no accessible repo for project #{project_id}, skipping")
+
+        :ok
+    end
+  end
+
+  defp set_zero_counters do
+    Tracer.set_attribute("spotter.hotspot.entries_total", 0)
+    Tracer.set_attribute("spotter.hotspot.scored_count", 0)
+    Tracer.set_attribute("spotter.hotspot.read_skipped_count", 0)
+    Tracer.set_attribute("spotter.hotspot.score_failed_count", 0)
+    Tracer.set_attribute("spotter.hotspot.persist_failed_count", 0)
   end
 
   defp top_heatmap_entries(project_id) do
