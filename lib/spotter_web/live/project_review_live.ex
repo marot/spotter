@@ -1,11 +1,12 @@
 defmodule SpotterWeb.ProjectReviewLive do
   use Phoenix.LiveView
 
-  alias Spotter.Services.{ReviewTokenStore, Tmux}
+  alias Spotter.Services.{ReviewSessionRegistry, ReviewTokenStore, Tmux}
   alias Spotter.Transcripts.{Annotation, Project, Session}
   require Ash.Query
 
   @review_port Application.compile_env(:spotter, [SpotterWeb.Endpoint, :http, :port], 1100)
+  @review_heartbeat_interval 10_000
 
   @impl true
   def mount(%{"project_id" => project_id}, _session, socket) do
@@ -13,11 +14,17 @@ defmodule SpotterWeb.ProjectReviewLive do
       {:ok, project} ->
         {:ok,
          socket
-         |> assign(project: project)
+         |> assign(project: project, review_session_name: nil)
          |> load_review_data()}
 
       _ ->
-        {:ok, assign(socket, project: nil, sessions: [], open_annotations: [])}
+        {:ok,
+         assign(socket,
+           project: nil,
+           sessions: [],
+           open_annotations: [],
+           review_session_name: nil
+         )}
     end
   end
 
@@ -56,14 +63,47 @@ defmodule SpotterWeb.ProjectReviewLive do
     project = socket.assigns.project
     token = ReviewTokenStore.mint(project.id)
 
-    case Tmux.launch_project_review(project.id, token, @review_port) do
+    case tmux_module().launch_project_review(project.id, token, @review_port) do
       {:ok, name} ->
-        {:noreply, put_flash(socket, :info, "Launched review session: #{name}")}
+        previous = socket.assigns.review_session_name
+
+        if previous && previous != name do
+          ReviewSessionRegistry.deregister(previous)
+        end
+
+        ReviewSessionRegistry.register(name)
+        Process.send_after(self(), :review_heartbeat, @review_heartbeat_interval)
+
+        {:noreply,
+         socket
+         |> assign(review_session_name: name)
+         |> put_flash(:info, "Launched review session: #{name}")}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :info, "Failed to launch: #{reason}")}
     end
   end
+
+  @impl true
+  def handle_info(:review_heartbeat, socket) do
+    if name = socket.assigns.review_session_name do
+      ReviewSessionRegistry.heartbeat(name)
+      Process.send_after(self(), :review_heartbeat, @review_heartbeat_interval)
+    end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def terminate(_reason, socket) do
+    if name = socket.assigns[:review_session_name] do
+      ReviewSessionRegistry.deregister(name)
+    end
+
+    :ok
+  end
+
+  defp tmux_module, do: Application.get_env(:spotter, :tmux_module, Tmux)
 
   defp load_review_data(socket) do
     project = socket.assigns.project
