@@ -57,19 +57,64 @@ Hooks.Terminal = {
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon())
 
-    // Wait for fonts to load so xterm.js measures character width correctly
-    document.fonts.ready.then(() => {
-      term.open(this.el)
-      fitAddon.fit()
-      this._connectChannel(term, paneId)
-    })
-
     this._term = term
     this._fitAddon = fitAddon
     this._breakpointMap = null
     this._debugAnchors = null
     this._lastSyncedId = null
     this._showDebug = false
+
+    // Register LiveView event handlers synchronously so they're ready
+    // before LiveView delivers push_event data
+    this.handleEvent("highlight_annotation", ({ start_row, start_col, end_row, end_col }) => {
+      try {
+        const length = start_row === end_row
+          ? end_col - start_col
+          : (term.cols - start_col) + end_col + (end_row - start_row - 1) * term.cols
+        term.select(start_col, start_row, length)
+        setTimeout(() => { term.clearSelection() }, 2000)
+      } catch (_e) {
+        // Graceful fallback if API unavailable
+      }
+    })
+
+    this.handleEvent("breakpoint_map", ({ entries }) => {
+      this._breakpointMap = entries
+    })
+
+    this.handleEvent("debug_anchors", ({ anchors }) => {
+      this._debugAnchors = anchors
+      if (this._showDebug) this._renderDebugOverlay()
+    })
+
+    this.handleEvent("scroll_to_message", ({ id }) => {
+      const el = document.querySelector(`[data-message-id="${id}"]`)
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+
+    // Scroll sync: use breakpoint map for instant local lookup
+    let scrollTimeout = null
+    term.onScroll(() => {
+      clearTimeout(scrollTimeout)
+      scrollTimeout = setTimeout(() => {
+        const topLine = term.buffer.active.viewportY
+        if (this._breakpointMap && this._breakpointMap.length > 0) {
+          const messageId = this._lookupMessage(topLine)
+          if (messageId && messageId !== this._lastSyncedId) {
+            this._lastSyncedId = messageId
+            const el = document.querySelector(`[data-message-id="${messageId}"]`)
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
+          }
+        }
+      }, 150)
+    })
+
+    // Wait for fonts to load so xterm.js measures character width correctly
+    document.fonts.ready.then(() => {
+      term.open(this.el)
+      fitAddon.fit()
+      this._connectChannel(term, paneId)
+    })
 
     this._onResize = () => fitAddon.fit()
     window.addEventListener("resize", this._onResize)
@@ -124,62 +169,6 @@ Hooks.Terminal = {
           })
         }
       }
-    })
-
-    // Listen for highlight events from LiveView
-    this.handleEvent("highlight_annotation", ({ start_row, start_col, end_row, end_col }) => {
-      try {
-        const length = start_row === end_row
-          ? end_col - start_col
-          : (term.cols - start_col) + end_col + (end_row - start_row - 1) * term.cols
-        term.select(start_col, start_row, length)
-        setTimeout(() => { term.clearSelection() }, 2000)
-      } catch (_e) {
-        // Graceful fallback if API unavailable
-      }
-    })
-
-    // Breakpoint map from server (precomputed sync data)
-    this.handleEvent("breakpoint_map", ({ entries }) => {
-      this._breakpointMap = entries
-    })
-
-    // Debug anchor data from server
-    this.handleEvent("debug_anchors", ({ anchors }) => {
-      this._debugAnchors = anchors
-      if (this._showDebug) this._renderDebugOverlay()
-    })
-
-    // Scroll sync: use breakpoint map for instant local lookup, fallback to server roundtrip
-    let scrollTimeout = null
-    term.onScroll(() => {
-      clearTimeout(scrollTimeout)
-      scrollTimeout = setTimeout(() => {
-        const topLine = term.buffer.active.viewportY
-        if (this._breakpointMap && this._breakpointMap.length > 0) {
-          const messageId = this._lookupMessage(topLine)
-          if (messageId && messageId !== this._lastSyncedId) {
-            this._lastSyncedId = messageId
-            const el = document.querySelector(`[data-message-id="${messageId}"]`)
-            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
-          }
-        } else {
-          // Legacy fallback: send visible text to server
-          const buffer = term.buffer.active
-          const lines = []
-          for (let i = buffer.viewportY; i < buffer.viewportY + term.rows; i++) {
-            const line = buffer.getLine(i)
-            if (line) lines.push(line.translateToString(true))
-          }
-          this.pushEvent("terminal_scrolled", { visible_text: lines.join("\n") })
-        }
-      }, 150)
-    })
-
-    // Listen for scroll_to_message events from LiveView
-    this.handleEvent("scroll_to_message", ({ id }) => {
-      const el = document.querySelector(`[data-message-id="${id}"]`)
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" })
     })
 
     this._channel = channel

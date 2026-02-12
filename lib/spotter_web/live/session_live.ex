@@ -272,22 +272,6 @@ defmodule SpotterWeb.SessionLive do
     {:noreply, assign(socket, clicked_subagent: ref)}
   end
 
-  # Legacy fallback — removed once breakpoint sync is stable
-  def handle_event("terminal_scrolled", %{"visible_text" => visible_text}, socket) do
-    current_message_id = find_matching_message(visible_text, socket.assigns.rendered_lines)
-
-    socket =
-      if current_message_id && current_message_id != socket.assigns.current_message_id do
-        socket
-        |> assign(current_message_id: current_message_id)
-        |> push_event("scroll_to_message", %{id: current_message_id})
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
   defp compute_sync_data(nil, _rendered_lines), do: {[], []}
 
   defp compute_sync_data(pane_id, rendered_lines) do
@@ -445,20 +429,6 @@ defmodule SpotterWeb.SessionLive do
         timestamp: msg.timestamp,
         agent_id: msg.agent_id
       }
-    end)
-  end
-
-  defp find_matching_message(visible_text, rendered_lines) do
-    visible_text
-    |> String.split("\n")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.find_value(&match_line_to_message(&1, rendered_lines))
-  end
-
-  defp match_line_to_message(trimmed_line, rendered_lines) do
-    Enum.find_value(rendered_lines, fn %{line: line, message_id: msg_id} ->
-      if String.contains?(line, trimmed_line), do: msg_id
     end)
   end
 
