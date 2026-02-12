@@ -95,6 +95,7 @@ defmodule SpotterWeb.HeatmapLive do
       <% else %>
         <div class="page-header">
           <h1>File Heatmap &mdash; {@project.name}</h1>
+          <a href={"/projects/#{@project.id}/hotspots"} class="btn btn-ghost">AI Hotspots</a>
           <a href="/" class="btn btn-ghost">Back</a>
         </div>
 

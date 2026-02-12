@@ -56,6 +56,11 @@ defmodule Spotter.Transcripts do
         get :read
         index :read
       end
+
+      base_route "/code_hotspots", Spotter.Transcripts.CodeHotspot do
+        get :read
+        index :read
+      end
     end
   end
 
@@ -72,5 +77,6 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.SessionCommitLink
     resource Spotter.Transcripts.FileHeatmap
     resource Spotter.Transcripts.SessionRework
+    resource Spotter.Transcripts.CodeHotspot
   end
 end
