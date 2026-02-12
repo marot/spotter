@@ -20,6 +20,7 @@ defmodule SpotterWeb.Router do
     pipe_through(:api)
 
     post("/hooks/session-start", SessionHookController, :session_start)
+    post("/hooks/session-end", SessionHookController, :session_end)
     post("/hooks/file-snapshot", HooksController, :file_snapshot)
     post("/hooks/tool-call", HooksController, :tool_call)
     post("/hooks/commit-event", HooksController, :commit_event)

@@ -15,6 +15,7 @@ defmodule Spotter.Application do
     children = [
       {Phoenix.PubSub, name: Spotter.PubSub},
       Spotter.Services.SessionRegistry,
+      Spotter.Services.ActiveSessionRegistry,
       Spotter.Services.ReviewSessionRegistry,
       Spotter.Services.ReviewTokenStore,
       Spotter.Repo,

@@ -2,6 +2,7 @@ defmodule SpotterWeb.HooksController do
   @moduledoc false
   use Phoenix.Controller, formats: [:json]
 
+  alias Spotter.Services.ActiveSessionRegistry
   alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
   alias Spotter.Transcripts.Jobs.ComputeCoChange
@@ -30,6 +31,8 @@ defmodule SpotterWeb.HooksController do
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      ActiveSessionRegistry.touch(session_id, :commit_event)
+
       with :ok <- validate_hashes(hashes),
            {:ok, session} <- find_session(session_id) do
         evidence = build_evidence(params)
@@ -91,6 +94,8 @@ defmodule SpotterWeb.HooksController do
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      ActiveSessionRegistry.touch(session_id, :file_snapshot)
+
       with {:ok, session} <- find_session(session_id),
            {:ok, attrs} <- build_attrs(params, session),
            {:ok, _snapshot} <- Ash.create(FileSnapshot, attrs) do
@@ -154,6 +159,8 @@ defmodule SpotterWeb.HooksController do
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      ActiveSessionRegistry.touch(session_id, :tool_call)
+
       with {:ok, session} <- Sessions.find_or_create(session_id),
            {:ok, _tool_call} <- create_tool_call(session, params) do
         conn
