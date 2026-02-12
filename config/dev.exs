@@ -1,10 +1,14 @@
 import Config
 
 # OpenTelemetry development configuration
-# Use stdout exporter and full sampling for local debugging
+# Use OTLP exporter by default for local collector workflows
 config :opentelemetry,
   span_processor: :batch,
-  traces_exporter: {:otel_exporter_stdout, %{}}
+  traces_exporter: :otlp
+
+config :opentelemetry_exporter,
+  otlp_protocol: :http_protobuf,
+  otlp_endpoint: System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT") || "http://localhost:4318"
 
 config :spotter, Spotter.Repo,
   database: "../path/to/your.db",
