@@ -7,6 +7,9 @@ defmodule Spotter.Services.WaitingSummary do
   Falls back to a deterministic summary on any LLM/parse failure.
   """
 
+  alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.Message, as: LangMessage
   alias Spotter.Services.WaitingSummary.SliceBuilder
   alias Spotter.Transcripts.JsonlParser
 
@@ -94,32 +97,28 @@ defmodule Spotter.Services.WaitingSummary do
 
     try do
       {:ok, llm} =
-        LangChain.ChatModels.ChatAnthropic.new(%{
+        ChatAnthropic.new(%{
           model: model,
           max_tokens: 200,
           temperature: 0.0,
           api_key: anthropic_api_key()
         })
 
-      {:ok, chain} =
-        LangChain.Chains.LLMChain.new(%{llm: llm})
+      {:ok, chain} = LLMChain.new(%{llm: llm})
 
       chain
-      |> LangChain.Chains.LLMChain.add_message(LangChain.Message.new_system!(system_prompt))
-      |> LangChain.Chains.LLMChain.add_message(LangChain.Message.new_user!(input_text))
-      |> LangChain.Chains.LLMChain.run(timeout: @llm_timeout)
+      |> LLMChain.add_message(LangMessage.new_system!(system_prompt))
+      |> LLMChain.add_message(LangMessage.new_user!(input_text))
+      |> LLMChain.run(timeout: @llm_timeout)
       |> case do
-        {:ok, _chain, response} when is_struct(response) ->
-          {:ok, response.content |> to_string() |> String.trim()}
-
-        {:ok, _chain, nil} ->
-          {:error, :empty_response}
+        {:ok, updated_chain} ->
+          case updated_chain.last_message do
+            nil -> {:error, :empty_response}
+            msg -> {:ok, msg.content |> to_string() |> String.trim()}
+          end
 
         {:error, _chain, reason} ->
           {:error, reason}
-
-        other ->
-          {:error, {:unexpected_response, other}}
       end
     rescue
       e ->

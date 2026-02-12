@@ -1153,6 +1153,58 @@ input::placeholder, textarea::placeholder {
   font-size: 0.85em;
 }
 
+/* Debug grid layout */
+.transcript-debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.transcript-debug-grid .transcript-row {
+  border-right: 1px solid var(--border);
+}
+
+.transcript-debug-sidecar {
+  padding: 2px 6px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.transcript-debug-sidecar pre {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.transcript-debug-sidecar code {
+  font-family: var(--font-mono);
+}
+
+/* Expand controls */
+.transcript-expand-control {
+  padding: 2px 6px;
+}
+
+.transcript-debug-grid .transcript-expand-control {
+  grid-column: 1 / -1;
+}
+
+.btn-expand-tool-result {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.btn-expand-tool-result:hover {
+  text-decoration: underline;
+}
+
 /* Thread grouping */
 .transcript-thread {
   margin-bottom: 2px;

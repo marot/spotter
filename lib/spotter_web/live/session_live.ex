@@ -1,12 +1,14 @@
 defmodule SpotterWeb.SessionLive do
   use Phoenix.LiveView
+  use AshComputer.LiveView
+
+  import SpotterWeb.TranscriptComponents
 
   alias Spotter.Services.{
     ReviewSessionRegistry,
     ReviewUpdates,
     SessionRegistry,
     Tmux,
-    TranscriptRenderer,
     TranscriptSync
   }
 
@@ -22,6 +24,8 @@ defmodule SpotterWeb.SessionLive do
   }
 
   require Ash.Query
+
+  attach_computer(SpotterWeb.Live.TranscriptComputers, :transcript_view)
 
   @review_heartbeat_interval 10_000
 
@@ -44,15 +48,16 @@ defmodule SpotterWeb.SessionLive do
       end
     end
 
-    {session_record, messages, rendered_lines} = load_transcript(session_id)
+    {session_record, messages} = load_session_data(session_id)
     annotations = load_annotations(session_record)
     errors = load_errors(session_record)
     rework_events = load_rework_events(session_record)
     commit_links = load_commit_links(session_id)
-    {breakpoint_map, anchors} = compute_sync_data(pane_id, rendered_lines)
+    session_cwd = if session_record, do: session_record.cwd, else: nil
 
     socket =
-      assign(socket,
+      socket
+      |> assign(
         pane_id: pane_id,
         session_id: session_id,
         session_record: session_record,
@@ -67,21 +72,25 @@ defmodule SpotterWeb.SessionLive do
         selection_start_col: nil,
         selection_end_row: nil,
         selection_end_col: nil,
-        messages: messages,
-        rendered_lines: rendered_lines,
         errors: errors,
         rework_events: rework_events,
         commit_links: commit_links,
         current_message_id: nil,
         show_transcript: true,
-        breakpoint_map: breakpoint_map,
-        anchors: anchors,
-        show_debug: false,
         clicked_subagent: nil,
         active_sidebar_tab: :commits
       )
+      |> mount_computers(%{
+        transcript_view: %{messages: messages, session_cwd: session_cwd}
+      })
 
-    socket = push_sync_events(socket)
+    rendered_lines = socket.assigns.transcript_view_rendered_lines
+    {breakpoint_map, anchors} = compute_sync_data(pane_id, rendered_lines)
+
+    socket =
+      socket
+      |> assign(breakpoint_map: breakpoint_map, anchors: anchors)
+      |> push_sync_events()
 
     {:ok, socket}
   end
@@ -264,7 +273,9 @@ defmodule SpotterWeb.SessionLive do
   end
 
   def handle_event("toggle_debug", _params, socket) do
-    {:noreply, assign(socket, show_debug: !socket.assigns.show_debug)}
+    new_debug = !socket.assigns.transcript_view_show_debug
+
+    {:noreply, update_computer_inputs(socket, :transcript_view, %{show_debug: new_debug})}
   end
 
   def handle_event("subagent_reference_clicked", %{"ref" => ref}, socket) do
@@ -277,7 +288,7 @@ defmodule SpotterWeb.SessionLive do
 
   defp jump_to_tool_use(socket, tool_use_id) do
     line_index =
-      Enum.find_index(socket.assigns.rendered_lines, fn line ->
+      Enum.find_index(socket.assigns.transcript_view_rendered_lines, fn line ->
         line[:tool_use_id] == tool_use_id
       end)
 
@@ -315,7 +326,7 @@ defmodule SpotterWeb.SessionLive do
 
   defp recompute_and_push_sync(socket) do
     {breakpoint_map, anchors} =
-      compute_sync_data(socket.assigns.pane_id, socket.assigns.rendered_lines)
+      compute_sync_data(socket.assigns.pane_id, socket.assigns.transcript_view_rendered_lines)
 
     socket
     |> assign(breakpoint_map: breakpoint_map, anchors: anchors)
@@ -397,18 +408,17 @@ defmodule SpotterWeb.SessionLive do
     end
   end
 
-  defp load_transcript(session_id) do
+  defp load_session_data(session_id) do
     case Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one() do
       {:ok, %Session{} = session} ->
         messages = load_session_messages(session)
-        opts = if session.cwd, do: [session_cwd: session.cwd], else: []
-        {session, messages, TranscriptRenderer.render(messages, opts)}
+        {session, messages}
 
       _ ->
-        {nil, [], []}
+        {nil, []}
     end
   rescue
-    _ -> {nil, [], []}
+    _ -> {nil, []}
   end
 
   defp load_errors(nil), do: []
@@ -511,8 +521,8 @@ defmodule SpotterWeb.SessionLive do
       <div id="transcript-panel" class="session-transcript">
         <div class="transcript-header">
           <h3>Transcript</h3>
-          <span class={"transcript-header-hint#{if @show_debug, do: " debug-active", else: ""}"}>
-            {if @show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug"}
+          <span class={"transcript-header-hint#{if @transcript_view_show_debug, do: " debug-active", else: ""}"}>
+            {if @transcript_view_show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug"}
           </span>
         </div>
 
@@ -548,43 +558,16 @@ defmodule SpotterWeb.SessionLive do
           </div>
         <% end %>
 
-        <%= if @rendered_lines != [] do %>
-          <div id="transcript-messages" phx-hook="TranscriptHighlighter" phx-update="replace">
-            <%= for line <- @rendered_lines do %>
-              <div
-                id={"msg-#{line.line_number}"}
-                data-message-id={line.message_id}
-                class={transcript_row_classes(line, @current_message_id, @clicked_subagent)}
-                data-render-mode={to_string(line[:render_mode] || "plain")}
-              >
-                <%= if @show_debug do %>
-                  <% anchor = Enum.find(@anchors, & &1.tl == line.line_number) %>
-                  <span
-                    :if={anchor}
-                    style={"display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:#{anchor_color(anchor.type)};"}
-                    title={"#{anchor.type} → terminal line #{anchor.t}"}
-                  />
-                <% end %>
-                <%= if line[:subagent_ref] do %>
-                  <span
-                    class="subagent-badge"
-                    phx-click="subagent_reference_clicked"
-                    phx-value-ref={line.subagent_ref}
-                  >
-                    agent
-                  </span>
-                <% end %>
-                <%= if line[:render_mode] == :code do %>
-                  <pre class="row-text row-text-code"><code class={"language-#{line[:code_language] || "plaintext"}"}><%= line.line %></code></pre>
-                <% else %>
-                  <span class="row-text"><%= line.line %></span>
-                <% end %>
-              </div>
-            <% end %>
-          </div>
-        <% else %>
-          <p class="transcript-empty">No transcript available for this session.</p>
-        <% end %>
+        <.transcript_panel
+          rendered_lines={@transcript_view_visible_lines}
+          all_rendered_lines={@transcript_view_rendered_lines}
+          expanded_tool_groups={@transcript_view_expanded_tool_groups}
+          current_message_id={@current_message_id}
+          clicked_subagent={@clicked_subagent}
+          show_debug={@transcript_view_show_debug}
+          anchors={@anchors}
+          empty_message="No transcript available for this session."
+        />
       </div>
       <div class="session-sidebar">
         <div class="sidebar-tabs">
@@ -742,34 +725,4 @@ defmodule SpotterWeb.SessionLive do
         []
     end
   end
-
-  defp transcript_row_classes(line, current_message_id, clicked_subagent) do
-    kind =
-      case line[:kind] do
-        :tool_use -> ["is-tool-use"]
-        :tool_result -> ["is-tool-result"]
-        :thinking -> ["is-thinking"]
-        _ -> []
-      end
-
-    type = if line.type == :user, do: ["is-user"], else: []
-    code = if line[:render_mode] == :code, do: ["is-code"], else: []
-    active = if current_message_id == line.message_id, do: ["is-active"], else: []
-
-    classes = ["transcript-row"] ++ kind ++ type ++ code ++ active
-    classes = classes ++ subagent_classes(line[:subagent_ref], clicked_subagent)
-    Enum.join(classes, " ")
-  end
-
-  defp subagent_classes(nil, _clicked), do: []
-
-  defp subagent_classes(ref, clicked) do
-    if clicked == ref, do: ["is-subagent", "is-clicked"], else: ["is-subagent"]
-  end
-
-  defp anchor_color(:tool_use), do: "var(--accent-amber)"
-  defp anchor_color(:user), do: "var(--accent-blue)"
-  defp anchor_color(:result), do: "var(--accent-green)"
-  defp anchor_color(:text), do: "var(--accent-purple)"
-  defp anchor_color(_), do: "var(--text-tertiary)"
 end

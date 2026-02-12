@@ -1,7 +1,10 @@
 defmodule SpotterWeb.SubagentLive do
   use Phoenix.LiveView
+  use AshComputer.LiveView
 
-  alias Spotter.Services.{ReviewUpdates, TranscriptRenderer}
+  import SpotterWeb.TranscriptComponents
+
+  alias Spotter.Services.ReviewUpdates
 
   alias Spotter.Transcripts.{
     Annotation,
@@ -13,23 +16,29 @@ defmodule SpotterWeb.SubagentLive do
 
   require Ash.Query
 
+  attach_computer(SpotterWeb.Live.TranscriptComputers, :transcript_view)
+
   @impl true
   def mount(%{"session_id" => session_id, "agent_id" => agent_id}, _session, socket) do
     case load_subagent_data(session_id, agent_id) do
-      {:ok, session_record, subagent, messages, rendered_lines, annotations} ->
+      {:ok, session_record, subagent, messages, annotations} ->
+        session_cwd = session_record.cwd
+
         socket =
-          assign(socket,
+          socket
+          |> assign(
             session_id: session_id,
             agent_id: agent_id,
             session_record: session_record,
             subagent: subagent,
-            messages: messages,
-            rendered_lines: rendered_lines,
             annotations: annotations,
             selected_text: nil,
             selection_message_ids: [],
             not_found: false
           )
+          |> mount_computers(%{
+            transcript_view: %{messages: messages, session_cwd: session_cwd}
+          })
 
         {:ok, socket}
 
@@ -112,6 +121,16 @@ defmodule SpotterWeb.SubagentLive do
     end
   end
 
+  def handle_event("toggle_debug", _params, socket) do
+    new_debug = !socket.assigns.transcript_view_show_debug
+    {:noreply, update_computer_inputs(socket, :transcript_view, %{show_debug: new_debug})}
+  end
+
+  # No-op handler for subagent badge clicks (subagents don't navigate further)
+  def handle_event("subagent_reference_clicked", _params, socket) do
+    {:noreply, socket}
+  end
+
   defp load_subagent_data(session_id, agent_id) do
     with {:ok, %Session{} = session_record} <-
            Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one(),
@@ -120,9 +139,8 @@ defmodule SpotterWeb.SubagentLive do
            |> Ash.Query.filter(session_id == ^session_record.id and agent_id == ^agent_id)
            |> Ash.read_one() do
       messages = load_messages(subagent)
-      rendered_lines = TranscriptRenderer.render(messages)
       annotations = load_annotations(subagent)
-      {:ok, session_record, subagent, messages, rendered_lines, annotations}
+      {:ok, session_record, subagent, messages, annotations}
     else
       _ -> :not_found
     end
@@ -166,21 +184,6 @@ defmodule SpotterWeb.SubagentLive do
     end)
   end
 
-  defp transcript_row_classes(line) do
-    kind =
-      case line[:kind] do
-        :tool_use -> ["is-tool-use"]
-        :tool_result -> ["is-tool-result"]
-        :thinking -> ["is-thinking"]
-        _ -> []
-      end
-
-    type = if line.type == :user, do: ["is-user"], else: []
-    code = if line[:render_mode] == :code, do: ["is-code"], else: []
-
-    Enum.join(["transcript-row"] ++ kind ++ type ++ code, " ")
-  end
-
   @impl true
   def render(assigns) do
     ~H"""
@@ -212,23 +215,13 @@ defmodule SpotterWeb.SubagentLive do
             <h3>Transcript</h3>
           </div>
 
-          <%= if @rendered_lines != [] do %>
-            <div id="transcript-messages" phx-hook="TranscriptSelection" phx-update="replace">
-              <%= for line <- @rendered_lines do %>
-                <div
-                  id={"msg-#{line.line_number}"}
-                  data-message-id={line.message_id}
-                  class={transcript_row_classes(line)}
-                >
-                  <span class="row-text"><%= line.line %></span>
-                </div>
-              <% end %>
-            </div>
-          <% else %>
-            <p class="transcript-empty">
-              No transcript available for this agent.
-            </p>
-          <% end %>
+          <.transcript_panel
+            rendered_lines={@transcript_view_visible_lines}
+            all_rendered_lines={@transcript_view_rendered_lines}
+            expanded_tool_groups={@transcript_view_expanded_tool_groups}
+            show_debug={@transcript_view_show_debug}
+            empty_message="No transcript available for this agent."
+          />
         </div>
         <div class="session-sidebar">
           <div class="sidebar-tab-content">
@@ -278,7 +271,11 @@ defmodule SpotterWeb.SubagentLive do
                   <span class="annotation-time">
                     <%= Calendar.strftime(ann.inserted_at, "%H:%M") %>
                   </span>
-                  <button class="btn-ghost text-error text-xs" phx-click="delete_annotation" phx-value-id={ann.id}>
+                  <button
+                    class="btn-ghost text-error text-xs"
+                    phx-click="delete_annotation"
+                    phx-value-id={ann.id}
+                  >
                     Delete
                   </button>
                 </div>
