@@ -4,6 +4,7 @@ defmodule SpotterWeb.HooksController do
 
   alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
+  alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.Jobs.EnrichCommits
   alias Spotter.Transcripts.Session
   alias Spotter.Transcripts.SessionCommitLink
@@ -22,6 +23,7 @@ defmodule SpotterWeb.HooksController do
       evidence = build_evidence(params)
       ingested = ingest_commits(hashes, session, params["git_branch"], evidence)
       enqueue_enrichment(hashes, session)
+      enqueue_heatmap(session)
 
       conn |> put_status(:created) |> json(%{ok: true, ingested: ingested})
     else
@@ -47,6 +49,8 @@ defmodule SpotterWeb.HooksController do
     with {:ok, session} <- find_session(session_id),
          {:ok, attrs} <- build_attrs(params, session),
          {:ok, _snapshot} <- Ash.create(FileSnapshot, attrs) do
+      enqueue_heatmap(session)
+
       conn
       |> put_status(:created)
       |> json(%{ok: true})
@@ -100,6 +104,12 @@ defmodule SpotterWeb.HooksController do
 
   def tool_call(conn, _params) do
     conn |> put_status(:bad_request) |> json(%{error: "session_id is required"})
+  end
+
+  defp enqueue_heatmap(session) do
+    %{project_id: session.project_id}
+    |> ComputeHeatmap.new()
+    |> Oban.insert()
   end
 
   defp enqueue_enrichment(hashes, session) when hashes != [] do
