@@ -46,6 +46,7 @@ defmodule SpotterWeb.TranscriptComponents do
         phx-hook="TranscriptHighlighter"
         phx-update="replace"
         class={if @show_debug, do: "transcript-debug-grid", else: ""}
+        data-testid="transcript-container"
       >
         <%= for line <- @rendered_lines do %>
           <.transcript_row
@@ -90,6 +91,8 @@ defmodule SpotterWeb.TranscriptComponents do
       data-line-number={@line.line_number}
       class={row_classes(@line, @current_message_id, @clicked_subagent)}
       data-render-mode={to_string(@line[:render_mode] || "plain")}
+      data-testid="transcript-row"
+      data-line-number={@line.line_number}
     >
       <%= if @show_debug do %>
         <% anchor = Enum.find(@anchors, &(&1.tl == @line.line_number)) %>
