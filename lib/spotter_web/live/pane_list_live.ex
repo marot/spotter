@@ -371,6 +371,9 @@ defmodule SpotterWeb.PaneListLive do
               <a href={"/projects/#{project.id}/review"} class="btn btn-ghost text-xs">
                 Review
               </a>
+              <a href={"/projects/#{project.id}/heatmap"} class="btn btn-ghost text-xs">
+                Heatmap
+              </a>
               <.sync_indicator status={Map.get(@sync_status, project.name)} stats={Map.get(@sync_stats, project.name)} />
             </div>
 
