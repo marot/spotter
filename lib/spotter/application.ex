@@ -18,6 +18,8 @@ defmodule Spotter.Application do
       Spotter.Services.ActiveSessionRegistry,
       Spotter.Services.ReviewSessionRegistry,
       Spotter.Services.ReviewTokenStore,
+      {Registry, keys: :unique, name: Spotter.Services.TranscriptTailRegistry},
+      Spotter.Services.TranscriptTailSupervisor,
       Spotter.Repo,
       {Oban,
        AshOban.config(

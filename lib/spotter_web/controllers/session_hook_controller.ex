@@ -4,6 +4,7 @@ defmodule SpotterWeb.SessionHookController do
 
   alias Spotter.Services.ActiveSessionRegistry
   alias Spotter.Services.SessionRegistry
+  alias Spotter.Services.TranscriptTailSupervisor
   alias Spotter.Services.WaitingSummary
   alias Spotter.Transcripts.Jobs.SyncTranscripts
   alias Spotter.Transcripts.Sessions
@@ -120,6 +121,7 @@ defmodule SpotterWeb.SessionHookController do
     } do
       reason = params["reason"]
       ActiveSessionRegistry.end_session(session_id, reason)
+      TranscriptTailSupervisor.stop_worker(session_id)
 
       conn
       |> OtelTraceHelpers.put_trace_response_header()
