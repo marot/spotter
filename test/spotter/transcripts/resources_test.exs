@@ -8,6 +8,8 @@ defmodule Spotter.Transcripts.ResourcesTest do
     Annotation,
     AnnotationMessageRef,
     CoChangeGroup,
+    CoChangeGroupCommit,
+    CoChangeGroupMemberStat,
     Commit,
     FileHeatmap,
     Message,
@@ -464,6 +466,158 @@ defmodule Spotter.Transcripts.ResourcesTest do
         })
 
       assert file_group.id != dir_group.id
+    end
+  end
+
+  describe "CoChangeGroupCommit" do
+    setup do
+      project = Ash.create!(Project, %{name: "test-gcc", pattern: "^test"})
+      %{project: project}
+    end
+
+    test "creates a co-change group commit", %{project: project} do
+      gcc =
+        Ash.create!(CoChangeGroupCommit, %{
+          project_id: project.id,
+          scope: :file,
+          group_key: "lib/a.ex|lib/b.ex",
+          commit_hash: String.duplicate("a", 40),
+          committed_at: ~U[2026-02-10 12:00:00Z]
+        })
+
+      assert gcc.scope == :file
+      assert gcc.group_key == "lib/a.ex|lib/b.ex"
+      assert gcc.commit_hash == String.duplicate("a", 40)
+    end
+
+    test "upserts by project + scope + group_key + commit_hash", %{project: project} do
+      attrs = %{
+        project_id: project.id,
+        scope: :file,
+        group_key: "lib/a.ex|lib/b.ex",
+        commit_hash: String.duplicate("b", 40),
+        committed_at: ~U[2026-02-10 12:00:00Z]
+      }
+
+      first = Ash.create!(CoChangeGroupCommit, attrs)
+      second = Ash.create!(CoChangeGroupCommit, %{attrs | committed_at: ~U[2026-02-11 12:00:00Z]})
+
+      assert first.id == second.id
+      assert second.committed_at == ~U[2026-02-11 12:00:00.000000Z]
+    end
+
+    test "allows multiple commits for the same group", %{project: project} do
+      base = %{
+        project_id: project.id,
+        scope: :file,
+        group_key: "lib/a.ex|lib/b.ex"
+      }
+
+      gcc1 =
+        Ash.create!(
+          CoChangeGroupCommit,
+          Map.merge(base, %{commit_hash: String.duplicate("c", 40)})
+        )
+
+      gcc2 =
+        Ash.create!(
+          CoChangeGroupCommit,
+          Map.merge(base, %{commit_hash: String.duplicate("d", 40)})
+        )
+
+      assert gcc1.id != gcc2.id
+    end
+
+    test "rejects invalid scope", %{project: project} do
+      assert_raise Ash.Error.Invalid, fn ->
+        Ash.create!(CoChangeGroupCommit, %{
+          project_id: project.id,
+          scope: :invalid,
+          group_key: "lib/a.ex|lib/b.ex",
+          commit_hash: String.duplicate("e", 40)
+        })
+      end
+    end
+  end
+
+  describe "CoChangeGroupMemberStat" do
+    setup do
+      project = Ash.create!(Project, %{name: "test-gcms", pattern: "^test"})
+      %{project: project}
+    end
+
+    test "creates a member stat", %{project: project} do
+      stat =
+        Ash.create!(CoChangeGroupMemberStat, %{
+          project_id: project.id,
+          scope: :file,
+          group_key: "lib/a.ex|lib/b.ex",
+          member_path: "lib/a.ex",
+          size_bytes: 1024,
+          loc: 42,
+          measured_commit_hash: String.duplicate("a", 40),
+          measured_at: ~U[2026-02-10 12:00:00Z]
+        })
+
+      assert stat.member_path == "lib/a.ex"
+      assert stat.size_bytes == 1024
+      assert stat.loc == 42
+    end
+
+    test "upserts by project + scope + group_key + member_path", %{project: project} do
+      attrs = %{
+        project_id: project.id,
+        scope: :file,
+        group_key: "lib/a.ex|lib/b.ex",
+        member_path: "lib/a.ex",
+        size_bytes: 1024,
+        loc: 42,
+        measured_commit_hash: String.duplicate("b", 40),
+        measured_at: ~U[2026-02-10 12:00:00Z]
+      }
+
+      first = Ash.create!(CoChangeGroupMemberStat, attrs)
+      second = Ash.create!(CoChangeGroupMemberStat, %{attrs | size_bytes: 2048, loc: 80})
+
+      assert first.id == second.id
+      assert second.size_bytes == 2048
+      assert second.loc == 80
+    end
+
+    test "allows nil metrics", %{project: project} do
+      stat =
+        Ash.create!(CoChangeGroupMemberStat, %{
+          project_id: project.id,
+          scope: :file,
+          group_key: "lib/a.ex|lib/b.ex",
+          member_path: "lib/a.ex"
+        })
+
+      assert stat.size_bytes == nil
+      assert stat.loc == nil
+      assert stat.measured_commit_hash == nil
+    end
+
+    test "allows multiple members for the same group", %{project: project} do
+      base = %{
+        project_id: project.id,
+        scope: :file,
+        group_key: "lib/a.ex|lib/b.ex"
+      }
+
+      s1 =
+        Ash.create!(
+          CoChangeGroupMemberStat,
+          Map.merge(base, %{member_path: "lib/a.ex", size_bytes: 100})
+        )
+
+      s2 =
+        Ash.create!(
+          CoChangeGroupMemberStat,
+          Map.merge(base, %{member_path: "lib/b.ex", size_bytes: 200})
+        )
+
+      assert s1.id != s2.id
     end
   end
 

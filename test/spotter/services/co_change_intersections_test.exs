@@ -171,6 +171,40 @@ defmodule Spotter.Services.CoChangeIntersectionsTest do
     end
   end
 
+  describe "compute/2 matching_commits" do
+    test "includes matching commit hashes and timestamps per group" do
+      commits = [
+        %{hash: "c1", timestamp: @ts1, files: ["a.ex", "b.ex"]},
+        %{hash: "c2", timestamp: @ts2, files: ["a.ex", "b.ex"]},
+        %{hash: "c3", timestamp: @ts3, files: ["b.ex", "c.ex"]},
+        %{hash: "c4", timestamp: @ts4, files: ["b.ex", "c.ex"]}
+      ]
+
+      result = CoChangeIntersections.compute(commits, scope: :file)
+
+      ab = Enum.find(result, &(&1.group_key == "a.ex|b.ex"))
+      assert length(ab.matching_commits) == 2
+      hashes = Enum.map(ab.matching_commits, & &1.hash) |> Enum.sort()
+      assert hashes == ["c1", "c2"]
+
+      bc = Enum.find(result, &(&1.group_key == "b.ex|c.ex"))
+      assert length(bc.matching_commits) == 2
+      hashes = Enum.map(bc.matching_commits, & &1.hash) |> Enum.sort()
+      assert hashes == ["c3", "c4"]
+    end
+
+    test "matching_commits have correct timestamps" do
+      commits = [
+        %{hash: "c1", timestamp: @ts1, files: ["a.ex", "b.ex"]},
+        %{hash: "c2", timestamp: @ts3, files: ["a.ex", "b.ex"]}
+      ]
+
+      [group] = CoChangeIntersections.compute(commits, scope: :file)
+      timestamps = Enum.map(group.matching_commits, & &1.timestamp) |> Enum.sort(DateTime)
+      assert timestamps == [@ts1, @ts3]
+    end
+  end
+
   describe "compute/2 edge cases" do
     test "empty commits list returns empty" do
       assert CoChangeIntersections.compute([], scope: :file) == []

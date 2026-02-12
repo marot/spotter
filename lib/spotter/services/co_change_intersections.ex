@@ -10,11 +10,13 @@ defmodule Spotter.Services.CoChangeIntersections do
     .pdf .zip .tar .gz .bz2 .7z .exe .dll .so .dylib .o .beam .ez .pyc .class .jar)
 
   @type commit :: %{hash: String.t(), timestamp: DateTime.t(), files: [String.t()]}
+  @type matching_commit :: %{hash: String.t(), timestamp: DateTime.t()}
   @type group :: %{
           group_key: String.t(),
           members: [String.t()],
           frequency_30d: pos_integer(),
-          last_seen_at: DateTime.t()
+          last_seen_at: DateTime.t(),
+          matching_commits: [matching_commit()]
         }
 
   @doc """
@@ -31,7 +33,7 @@ defmodule Spotter.Services.CoChangeIntersections do
       commits
       |> Enum.map(fn commit ->
         members = normalize_members(commit.files, scope)
-        %{members: members, timestamp: commit.timestamp}
+        %{members: members, timestamp: commit.timestamp, hash: commit.hash}
       end)
       |> Enum.filter(fn %{members: members} -> MapSet.size(members) >= 2 end)
 
@@ -123,11 +125,15 @@ defmodule Spotter.Services.CoChangeIntersections do
       last_seen = supporting |> Enum.map(& &1.timestamp) |> Enum.max(DateTime)
       sorted_members = candidate |> MapSet.to_list() |> Enum.sort()
 
+      matching_commits =
+        Enum.map(supporting, fn s -> %{hash: s.hash, timestamp: s.timestamp} end)
+
       %{
         group_key: Enum.join(sorted_members, "|"),
         members: sorted_members,
         frequency_30d: frequency,
         last_seen_at: last_seen,
+        matching_commits: matching_commits,
         _set: candidate
       }
     end)

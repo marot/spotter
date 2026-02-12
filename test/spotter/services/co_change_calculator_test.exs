@@ -4,7 +4,14 @@ defmodule Spotter.Services.CoChangeCalculatorTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
   alias Spotter.Services.CoChangeCalculator
-  alias Spotter.Transcripts.{CoChangeGroup, Project, Session}
+
+  alias Spotter.Transcripts.{
+    CoChangeGroup,
+    CoChangeGroupCommit,
+    CoChangeGroupMemberStat,
+    Project,
+    Session
+  }
 
   require Ash.Query
 
@@ -43,7 +50,7 @@ defmodule Spotter.Services.CoChangeCalculatorTest do
       assert :ok = CoChangeCalculator.compute(project.id)
     end
 
-    test "returns :ok and persists groups for valid repo" do
+    test "returns :ok and persists groups with provenance for valid repo" do
       project = create_project("calc-real-repo")
       # Use the current repo as the cwd - it has real git history
       create_session(project, cwd: File.cwd!())
@@ -57,6 +64,17 @@ defmodule Spotter.Services.CoChangeCalculatorTest do
       # Real repo should produce at least some groups
       assert is_list(file_groups)
       assert is_list(dir_groups)
+
+      # Provenance: group commits should exist
+      group_commits = Ash.read!(CoChangeGroupCommit)
+      assert group_commits != []
+
+      # Provenance: member stats should exist
+      member_stats = Ash.read!(CoChangeGroupMemberStat)
+      assert member_stats != []
+
+      # Verify at least one member stat has metrics
+      assert Enum.any?(member_stats, &(&1.size_bytes != nil))
     end
 
     test "cleans up stale rows on re-run" do
@@ -78,6 +96,23 @@ defmodule Spotter.Services.CoChangeCalculatorTest do
       # Actually, no sessions means :skip so existing rows are kept
       remaining = read_groups(project.id, :file)
       assert length(remaining) == 1
+    end
+
+    test "compute is idempotent for provenance rows" do
+      project = create_project("calc-idempotent")
+      create_session(project, cwd: File.cwd!())
+
+      assert :ok = CoChangeCalculator.compute(project.id)
+      commits_after_first = Ash.read!(CoChangeGroupCommit)
+      stats_after_first = Ash.read!(CoChangeGroupMemberStat)
+
+      assert :ok = CoChangeCalculator.compute(project.id)
+      commits_after_second = Ash.read!(CoChangeGroupCommit)
+      stats_after_second = Ash.read!(CoChangeGroupMemberStat)
+
+      # Same number of rows (upsert, no duplicates)
+      assert length(commits_after_first) == length(commits_after_second)
+      assert length(stats_after_first) == length(stats_after_second)
     end
 
     test "deletes stale rows when repo is accessible" do

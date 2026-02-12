@@ -62,6 +62,16 @@ defmodule Spotter.Transcripts do
         index :read
       end
 
+      base_route "/co_change_group_commits", Spotter.Transcripts.CoChangeGroupCommit do
+        get :read
+        index :read
+      end
+
+      base_route "/co_change_group_member_stats", Spotter.Transcripts.CoChangeGroupMemberStat do
+        get :read
+        index :read
+      end
+
       base_route "/code_hotspots", Spotter.Transcripts.CodeHotspot do
         get :read
         index :read
@@ -83,6 +93,8 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.FileHeatmap
     resource Spotter.Transcripts.SessionRework
     resource Spotter.Transcripts.CoChangeGroup
+    resource Spotter.Transcripts.CoChangeGroupCommit
+    resource Spotter.Transcripts.CoChangeGroupMemberStat
     resource Spotter.Transcripts.CodeHotspot
   end
 end
