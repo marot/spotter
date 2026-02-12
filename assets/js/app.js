@@ -26,6 +26,46 @@ function highlightTranscriptCode(rootEl) {
   }
 }
 
+// Shared socket instance for all channel connections
+let sharedSocket = null
+function getSharedSocket() {
+  if (!sharedSocket) {
+    sharedSocket = new Socket("/socket", {})
+    sharedSocket.connect()
+  }
+  return sharedSocket
+}
+
+// Live review badge updates via reviews:counts channel
+function initReviewsBadge() {
+  const badge = document.querySelector("[data-reviews-badge]")
+  if (!badge) return
+
+  const socket = getSharedSocket()
+  const channel = socket.channel("reviews:counts", {})
+
+  function updateBadge(totalOpenCount) {
+    if (totalOpenCount > 0) {
+      badge.textContent = totalOpenCount
+      badge.style.display = ""
+    } else {
+      badge.textContent = "0"
+      badge.style.display = "none"
+    }
+  }
+
+  channel.on("counts_updated", ({ total_open_count }) => {
+    updateBadge(total_open_count)
+  })
+
+  channel.join()
+    .receive("ok", ({ total_open_count }) => {
+      updateBadge(total_open_count)
+    })
+}
+
+initReviewsBadge()
+
 const Hooks = {}
 
 Hooks.TranscriptHighlighter = {
@@ -140,9 +180,7 @@ Hooks.Terminal = {
   },
 
   _connectChannel(term, paneId) {
-    const socket = new Socket("/socket", {})
-    socket.connect()
-
+    const socket = getSharedSocket()
     const channel = socket.channel(`terminal:${paneId}`, {})
 
     channel.on("output", ({ data }) => {
@@ -181,7 +219,6 @@ Hooks.Terminal = {
     })
 
     this._channel = channel
-    this._socket = socket
   },
 
   _lookupMessage(terminalLine) {
@@ -241,7 +278,6 @@ Hooks.Terminal = {
     window.removeEventListener("resize", this._onResize)
     window.removeEventListener("keydown", this._onKeyDown)
     if (this._channel) this._channel.leave()
-    if (this._socket) this._socket.disconnect()
     if (this._term) this._term.dispose()
   },
 }
