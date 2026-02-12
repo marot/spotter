@@ -216,4 +216,101 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
       assert html =~ "review session" or html =~ "Failed to launch"
     end
   end
+
+  describe "open_conversation with fake tmux" do
+    @table :review_session_registry
+
+    setup do
+      Spotter.TestSupport.FakeTmux.start_link()
+      Application.put_env(:spotter, :tmux_module, Spotter.TestSupport.FakeTmux)
+
+      on_exit(fn ->
+        Application.delete_env(:spotter, :tmux_module)
+        Application.delete_env(:spotter, :fake_tmux_launch_result)
+        Spotter.TestSupport.FakeTmux.stop()
+      end)
+    end
+
+    defp create_project_with_annotation do
+      {project, session} = create_project_with_session()
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "review me",
+        comment: "annotation"
+      })
+
+      project
+    end
+
+    test "successful launch registers session in registry" do
+      session_name = "spotter-review-project-#{System.unique_integer([:positive])}"
+      Application.put_env(:spotter, :fake_tmux_launch_result, {:ok, session_name})
+      project = create_project_with_annotation()
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+
+      html = render_click(view, "open_conversation")
+
+      assert html =~ "Launched review session: #{session_name}"
+      assert [{^session_name, _ts}] = :ets.lookup(@table, session_name)
+
+      :ets.delete(@table, session_name)
+    end
+
+    test "heartbeat updates registry timestamp after launch" do
+      session_name = "spotter-review-project-hb-#{System.unique_integer([:positive])}"
+      Application.put_env(:spotter, :fake_tmux_launch_result, {:ok, session_name})
+      project = create_project_with_annotation()
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+      render_click(view, "open_conversation")
+
+      [{_, ts_before}] = :ets.lookup(@table, session_name)
+
+      Process.sleep(10)
+      send(view.pid, :review_heartbeat)
+      # Give the LiveView process time to handle the message
+      render(view)
+
+      [{_, ts_after}] = :ets.lookup(@table, session_name)
+      assert ts_after >= ts_before
+
+      :ets.delete(@table, session_name)
+    end
+
+    test "terminating LiveView deregisters session from registry" do
+      session_name = "spotter-review-project-term-#{System.unique_integer([:positive])}"
+      Application.put_env(:spotter, :fake_tmux_launch_result, {:ok, session_name})
+      project = create_project_with_annotation()
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+      render_click(view, "open_conversation")
+
+      assert [{^session_name, _}] = :ets.lookup(@table, session_name)
+
+      GenServer.stop(view.pid)
+      Process.sleep(50)
+
+      assert :ets.lookup(@table, session_name) == []
+    end
+
+    test "failed launch does not register session" do
+      Application.put_env(:spotter, :fake_tmux_launch_result, {:error, "no tmux"})
+      project = create_project_with_annotation()
+
+      conn = build_conn()
+      {:ok, view, _html} = live(conn, "/projects/#{project.id}/review")
+
+      html = render_click(view, "open_conversation")
+
+      assert html =~ "Failed to launch"
+      # No entries should have been registered for this test
+      all_entries = :ets.tab2list(@table)
+      refute Enum.any?(all_entries, fn {name, _} -> String.contains?(name, "project-test") end)
+    end
+  end
 end
