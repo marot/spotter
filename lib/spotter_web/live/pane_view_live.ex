@@ -37,6 +37,7 @@ defmodule SpotterWeb.PaneViewLive do
        cols: cols,
        rows: rows,
        annotations: annotations,
+       annotation_error: nil,
        selected_text: nil,
        selection_start_row: nil,
        selection_start_col: nil,
@@ -56,7 +57,11 @@ defmodule SpotterWeb.PaneViewLive do
     if pane_id == socket.assigns.pane_id do
       {:noreply,
        socket
-       |> assign(session_id: session_id, annotations: load_annotations(session_id))}
+       |> assign(
+         session_id: session_id,
+         annotations: load_annotations(session_id),
+         annotation_error: nil
+       )}
     else
       {:noreply, socket}
     end
@@ -70,7 +75,8 @@ defmodule SpotterWeb.PaneViewLive do
        selection_start_row: params["start_row"],
        selection_start_col: params["start_col"],
        selection_end_row: params["end_row"],
-       selection_end_col: params["end_col"]
+       selection_end_col: params["end_col"],
+       annotation_error: nil
      )}
   end
 
@@ -81,7 +87,8 @@ defmodule SpotterWeb.PaneViewLive do
        selection_start_row: nil,
        selection_start_col: nil,
        selection_end_row: nil,
-       selection_end_col: nil
+       selection_end_col: nil,
+       annotation_error: nil
      )}
   end
 
@@ -89,7 +96,7 @@ defmodule SpotterWeb.PaneViewLive do
     session_id = socket.assigns.session_id
 
     if is_nil(session_id) do
-      {:noreply, socket}
+      {:noreply, assign(socket, annotation_error: "Waiting for session...")}
     else
       params = %{
         session_id: session_id,
@@ -107,11 +114,12 @@ defmodule SpotterWeb.PaneViewLive do
            socket
            |> assign(
              annotations: load_annotations(session_id),
-             selected_text: nil
+             selected_text: nil,
+             annotation_error: nil
            )}
 
-        {:error, _} ->
-          {:noreply, socket}
+        {:error, error} ->
+          {:noreply, assign(socket, annotation_error: save_annotation_error_message(error))}
       end
     end
   end
@@ -292,6 +300,10 @@ defmodule SpotterWeb.PaneViewLive do
         <%= if is_nil(@session_id) do %>
           <p style="color: #888; font-style: italic;">Waiting for session...</p>
         <% else %>
+          <p :if={@annotation_error} style="color: #d87a7a; margin-top: 0; margin-bottom: 0.75rem; font-size: 0.9em;">
+            {@annotation_error}
+          </p>
+
           <%= if @selected_text do %>
             <div style="background: #1a1a2e; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
               <div style="font-size: 0.8em; color: #888; margin-bottom: 0.5rem;">Selected text:</div>
@@ -348,4 +360,19 @@ defmodule SpotterWeb.PaneViewLive do
   defp type_color(:assistant), do: "color: #e0e0e0;"
   defp type_color(:user), do: "color: #7ec8e3;"
   defp type_color(_), do: "color: #888;"
+
+  defp save_annotation_error_message(error) do
+    if session_not_synced_error?(error) do
+      "Session not yet synced."
+    else
+      "Failed to save annotation."
+    end
+  end
+
+  defp session_not_synced_error?(error) do
+    error_text = error |> inspect(pretty: false) |> String.downcase()
+
+    String.contains?(error_text, "foreign key") and
+      String.contains?(error_text, "session")
+  end
 end
