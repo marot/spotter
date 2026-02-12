@@ -8,6 +8,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
   require Logger
 
   alias Spotter.Transcripts.Config
+  alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.JsonlParser
   alias Spotter.Transcripts.SessionsIndex
 
@@ -59,6 +60,8 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
           acc + sync_directory(project, dir)
         end)
 
+      enqueue_heatmap(project)
+
       duration_ms = System.monotonic_time(:millisecond) - start_time
 
       broadcast(
@@ -77,6 +80,12 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
         broadcast({:sync_error, %{project: name, error: Exception.message(e)}})
         reraise e, __STACKTRACE__
     end
+  end
+
+  defp enqueue_heatmap(project) do
+    %{project_id: project.id}
+    |> ComputeHeatmap.new()
+    |> Oban.insert()
   end
 
   defp broadcast(message) do
