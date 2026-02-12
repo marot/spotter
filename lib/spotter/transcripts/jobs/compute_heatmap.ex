@@ -15,14 +15,9 @@ defmodule Spotter.Transcripts.Jobs.ComputeHeatmap do
   def perform(%Oban.Job{args: %{"project_id" => project_id}}) do
     Logger.info("ComputeHeatmap: computing heatmap for project #{project_id}")
 
-    case HeatmapCalculator.compute(project_id) do
-      :ok ->
-        enqueue_score_hotspots(project_id)
-        :ok
-
-      other ->
-        other
-    end
+    :ok = HeatmapCalculator.compute(project_id)
+    enqueue_score_hotspots(project_id)
+    :ok
   end
 
   defp enqueue_score_hotspots(project_id) do
