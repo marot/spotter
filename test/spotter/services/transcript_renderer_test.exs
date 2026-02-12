@@ -773,6 +773,384 @@ defmodule Spotter.Services.TranscriptRendererTest do
     end
   end
 
+  describe "tool result group metadata" do
+    test "all tool_result lines have group metadata" do
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_grp",
+                "content" => "line1\nline2\nline3"
+              }
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+
+      for line <- result do
+        assert line.tool_result_group == "toolu_grp"
+        assert line.result_total_lines == 3
+        assert is_integer(line.result_line_index)
+        assert is_boolean(line.hidden_by_default)
+      end
+
+      assert Enum.map(result, & &1.result_line_index) == [1, 2, 3]
+      assert Enum.all?(result, &(&1.hidden_by_default == false))
+    end
+
+    test "lines beyond 10 are hidden_by_default" do
+      lines = Enum.map_join(1..15, "\n", &"line #{&1}")
+
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_long",
+                "content" => lines
+              }
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert length(result) == 15
+
+      visible = Enum.reject(result, & &1.hidden_by_default)
+      hidden = Enum.filter(result, & &1.hidden_by_default)
+
+      assert length(visible) == 10
+      assert length(hidden) == 5
+      assert Enum.all?(visible, &(&1.result_line_index <= 10))
+      assert Enum.all?(hidden, &(&1.result_line_index > 10))
+    end
+
+    test "no silent truncation - all lines preserved" do
+      lines = Enum.map_join(1..20, "\n", &"line #{&1}")
+
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_all",
+                "content" => lines
+              }
+            ]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert length(result) == 20
+    end
+
+    test "non-tool-result lines have nil group metadata" do
+      messages = [
+        %{
+          type: :assistant,
+          content: %{"blocks" => [%{"type" => "text", "text" => "Hello"}]},
+          uuid: "msg-1"
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.tool_result_group == nil
+      assert line.result_line_index == nil
+      assert line.result_total_lines == nil
+      assert line.hidden_by_default == false
+    end
+
+    test "tool_result without tool_use_id gets deterministic group" do
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [%{"type" => "tool_result", "content" => "output"}]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.tool_result_group != nil
+      assert line.result_line_index == 1
+      assert line.result_total_lines == 1
+    end
+
+    test "empty tool_result has group metadata" do
+      messages = [
+        %{
+          type: :user,
+          content: %{
+            "blocks" => [%{"type" => "tool_result", "tool_use_id" => "toolu_empty"}]
+          },
+          uuid: "msg-1"
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.tool_result_group != nil
+      assert line.result_line_index == 1
+      assert line.result_total_lines == 1
+      assert line.hidden_by_default == false
+    end
+  end
+
+  describe "debug payload" do
+    test "each rendered line has a debug_payload map" do
+      messages = [
+        %{
+          type: :assistant,
+          id: "db-1",
+          uuid: "uuid-1",
+          role: :assistant,
+          content: %{"blocks" => [%{"type" => "text", "text" => "Hello"}]}
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert is_map(line.debug_payload)
+      assert line.debug_payload.id == "db-1"
+      assert line.debug_payload.uuid == "uuid-1"
+      assert line.debug_payload.type == :assistant
+      assert line.debug_payload.role == :assistant
+      assert line.debug_payload.kind == :text
+      assert line.debug_payload.rendered_line == "Hello"
+    end
+
+    test "tool_use debug payload includes tool_use_id" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_dbg",
+                "input" => %{"command" => "ls"}
+              }
+            ]
+          }
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.debug_payload.tool_use_id == "toolu_dbg"
+      assert line.debug_payload.thread_key == "toolu_dbg"
+    end
+  end
+
+  describe "read snippet code classification" do
+    test "numbered read output in tool_result marked as code with inferred elixir language" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Read",
+                "id" => "toolu_read",
+                "input" => %{"file_path" => "/home/user/project/lib/app.ex"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_read",
+                "content" => "     1→defmodule App do\n     2→  def hello, do: :world\n     3→end"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      code_lines = Enum.filter(result, &(&1.render_mode == :code))
+
+      assert length(code_lines) == 3
+      assert Enum.all?(code_lines, &(&1.code_language == "elixir"))
+    end
+
+    test "numbered read output for .json file infers json language" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Read",
+                "id" => "toolu_json",
+                "input" => %{"file_path" => "/tmp/config.json"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_json",
+                "content" => "     1→{\"key\": \"value\"}"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      code_lines = Enum.filter(result, &(&1.render_mode == :code))
+
+      assert length(code_lines) == 1
+      assert hd(code_lines).code_language == "json"
+    end
+
+    test "numbered output from non-Read tool defaults to plaintext" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_bash",
+                "input" => %{"command" => "cat -n file.txt"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_bash",
+                "content" => "     1→some output"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      code_lines = Enum.filter(result, &(&1.render_mode == :code))
+
+      assert length(code_lines) == 1
+      assert hd(code_lines).code_language == "plaintext"
+    end
+
+    test "unknown extension defaults to plaintext for numbered lines" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Read",
+                "id" => "toolu_unk",
+                "input" => %{"file_path" => "/tmp/file.xyz"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_unk",
+                "content" => "     1→content"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      code_lines = Enum.filter(result, &(&1.render_mode == :code))
+
+      assert length(code_lines) == 1
+      assert hd(code_lines).code_language == "plaintext"
+    end
+
+    test "non-numbered tool_result lines remain plain" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Read",
+                "id" => "toolu_mix",
+                "input" => %{"file_path" => "/tmp/app.ex"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_mix",
+                "content" => "     1→defmodule App do\nsome plain text\n     3→end"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_result_lines = Enum.filter(result, &(&1.kind == :tool_result))
+
+      code = Enum.filter(tool_result_lines, &(&1.render_mode == :code))
+      plain = Enum.filter(tool_result_lines, &(&1.render_mode == :plain))
+
+      assert length(code) == 2
+      assert length(plain) == 1
+    end
+  end
+
   defp load_fixture(name) do
     path = Path.join(@fixtures_dir, name)
     {:ok, %{messages: messages}} = JsonlParser.parse_session_file(path)

@@ -6,15 +6,44 @@ defmodule Spotter.Services.TranscriptRenderer do
   what Claude Code renders in the terminal.
   """
 
-  @max_result_lines 5
+  @default_visible_lines 10
   @subagent_pattern ~r/agent-[a-zA-Z0-9]+/
+
+  @extension_to_language %{
+    ".ex" => "elixir",
+    ".exs" => "elixir",
+    ".eex" => "elixir",
+    ".heex" => "elixir",
+    ".leex" => "elixir",
+    ".sh" => "bash",
+    ".bash" => "bash",
+    ".zsh" => "bash",
+    ".json" => "json",
+    ".jsonl" => "json",
+    ".js" => "javascript",
+    ".jsx" => "javascript",
+    ".ts" => "typescript",
+    ".tsx" => "typescript",
+    ".py" => "python",
+    ".rb" => "ruby",
+    ".rs" => "rust",
+    ".go" => "go",
+    ".yml" => "yaml",
+    ".yaml" => "yaml",
+    ".toml" => "toml",
+    ".md" => "markdown",
+    ".html" => "html",
+    ".css" => "css",
+    ".sql" => "sql",
+    ".diff" => "diff"
+  }
 
   @doc """
   Renders a list of parsed messages into enriched line maps.
 
   Each line map contains `:line`, `:message_id`, `:type`, `:line_number`,
   `:kind`, `:tool_use_id`, `:thread_key`, `:subagent_ref`, `:code_language`,
-  and `:render_mode`.
+  `:render_mode`, `:debug_payload`, and tool-result group metadata.
 
   ## Options
 
@@ -24,18 +53,21 @@ defmodule Spotter.Services.TranscriptRenderer do
   @spec render([map()], keyword()) :: [map()]
   def render(messages, opts \\ []) do
     session_cwd = opts[:session_cwd]
+    tool_use_index = build_tool_use_index(messages)
 
     messages
     |> Enum.flat_map(fn msg ->
       msg
-      |> render_message_enriched(session_cwd)
+      |> render_message_enriched(session_cwd, tool_use_index)
       |> Enum.map(fn line_meta ->
         line_meta
         |> Map.put(:message_id, msg[:id] || msg[:uuid])
         |> Map.put(:type, msg[:type])
         |> put_subagent_ref(msg)
+        |> put_debug_payload(msg)
       end)
     end)
+    |> annotate_tool_result_groups()
     |> Enum.with_index(1)
     |> Enum.map(fn {entry, idx} -> Map.put(entry, :line_number, idx) end)
   end
@@ -110,31 +142,115 @@ defmodule Spotter.Services.TranscriptRenderer do
     end
   end
 
+  # ── Tool use index for language inference ─────────────────────────
+
+  defp build_tool_use_index(messages) do
+    messages
+    |> Enum.flat_map(&extract_tool_uses/1)
+    |> Map.new()
+  end
+
+  defp extract_tool_uses(%{type: :assistant, content: %{"blocks" => blocks}})
+       when is_list(blocks) do
+    blocks
+    |> Enum.filter(&(&1["type"] == "tool_use" && &1["id"]))
+    |> Enum.map(fn block ->
+      {block["id"], %{name: block["name"], input: block["input"]}}
+    end)
+  end
+
+  defp extract_tool_uses(_msg), do: []
+
+  # ── Tool result group annotation ──────────────────────────────────
+
+  defp annotate_tool_result_groups(lines) do
+    # Count total lines per tool_result_group
+    group_counts =
+      lines
+      |> Enum.filter(&(&1.kind == :tool_result))
+      |> Enum.group_by(& &1.tool_result_group)
+      |> Map.new(fn {group, group_lines} -> {group, length(group_lines)} end)
+
+    # Track per-group line index
+    {annotated, _counters} =
+      Enum.map_reduce(lines, %{}, fn line, counters ->
+        if line.kind == :tool_result do
+          group = line.tool_result_group
+          idx = Map.get(counters, group, 0) + 1
+          total = Map.get(group_counts, group, 0)
+
+          updated =
+            line
+            |> Map.put(:result_line_index, idx)
+            |> Map.put(:result_total_lines, total)
+            |> Map.put(:hidden_by_default, idx > @default_visible_lines)
+
+          {updated, Map.put(counters, group, idx)}
+        else
+          line =
+            line
+            |> Map.put(:tool_result_group, nil)
+            |> Map.put(:result_line_index, nil)
+            |> Map.put(:result_total_lines, nil)
+            |> Map.put(:hidden_by_default, false)
+
+          {line, counters}
+        end
+      end)
+
+    annotated
+  end
+
+  # ── Debug payload ─────────────────────────────────────────────────
+
+  defp put_debug_payload(line_meta, msg) do
+    payload = %{
+      id: msg[:id],
+      uuid: msg[:uuid],
+      type: msg[:type],
+      role: msg[:role],
+      tool_use_id: line_meta[:tool_use_id],
+      thread_key: line_meta[:thread_key],
+      kind: line_meta[:kind],
+      rendered_line: line_meta[:line]
+    }
+
+    Map.put(line_meta, :debug_payload, payload)
+  end
+
   # ── Enriched rendering (used by render/2) ──────────────────────────
 
-  defp render_message_enriched(%{type: type}, _session_cwd)
+  defp render_message_enriched(%{type: type}, _session_cwd, _tool_use_index)
        when type in [:progress, :system, :file_history_snapshot] do
     []
   end
 
-  defp render_message_enriched(%{content: nil}, _session_cwd), do: []
+  defp render_message_enriched(%{content: nil}, _session_cwd, _tool_use_index), do: []
 
-  defp render_message_enriched(%{type: :thinking, content: content}, _session_cwd) do
+  defp render_message_enriched(
+         %{type: :thinking, content: content},
+         _session_cwd,
+         _tool_use_index
+       ) do
     content
     |> extract_thinking_text()
     |> String.split("\n")
     |> Enum.map(&plain_line(&1, :thinking))
   end
 
-  defp render_message_enriched(%{type: :assistant, content: content}, session_cwd) do
+  defp render_message_enriched(
+         %{type: :assistant, content: content},
+         session_cwd,
+         _tool_use_index
+       ) do
     render_assistant_content_enriched(content, session_cwd)
   end
 
-  defp render_message_enriched(%{type: :user, content: content}, session_cwd) do
-    render_user_content_enriched(content, session_cwd)
+  defp render_message_enriched(%{type: :user, content: content}, session_cwd, tool_use_index) do
+    render_user_content_enriched(content, session_cwd, tool_use_index)
   end
 
-  defp render_message_enriched(_msg, _session_cwd), do: []
+  defp render_message_enriched(_msg, _session_cwd, _tool_use_index), do: []
 
   # ── Enriched assistant rendering ───────────────────────────────────
 
@@ -183,69 +299,86 @@ defmodule Spotter.Services.TranscriptRenderer do
 
   # ── Enriched user rendering ────────────────────────────────────────
 
-  defp render_user_content_enriched(%{"blocks" => blocks}, session_cwd)
+  defp render_user_content_enriched(%{"blocks" => blocks}, session_cwd, tool_use_index)
        when is_list(blocks) do
-    Enum.flat_map(blocks, &render_user_block_enriched(&1, session_cwd))
+    Enum.flat_map(blocks, &render_user_block_enriched(&1, session_cwd, tool_use_index))
   end
 
-  defp render_user_content_enriched(%{"text" => text}, _session_cwd) do
+  defp render_user_content_enriched(%{"text" => text}, _session_cwd, _tool_use_index) do
     classify_text_lines(String.split(text, "\n"), :text)
   end
 
-  defp render_user_content_enriched(_content, _session_cwd), do: []
+  defp render_user_content_enriched(_content, _session_cwd, _tool_use_index), do: []
 
   defp render_user_block_enriched(
          %{"type" => "tool_result", "content" => content} = block,
-         session_cwd
+         session_cwd,
+         tool_use_index
        )
        when is_binary(content) do
     tool_use_id = block["tool_use_id"]
     thread_key = tool_use_id || "unmatched-result"
+    group_key = tool_use_id || "group-#{:erlang.phash2(content)}"
+    inferred_lang = infer_result_language(tool_use_id, tool_use_index)
 
     content
     |> String.split("\n")
-    |> Enum.take(@max_result_lines)
     |> Enum.map(fn line ->
+      relativized = relativize_in_text(line, session_cwd)
+      {render_mode, code_language} = classify_result_line(relativized, inferred_lang)
+
       %{
-        line: "  ⎿  #{relativize_in_text(line, session_cwd)}",
+        line: "  ⎿  #{relativized}",
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
-        code_language: nil,
-        render_mode: :plain
+        tool_result_group: group_key,
+        code_language: code_language,
+        render_mode: render_mode
       }
     end)
   end
 
   defp render_user_block_enriched(
          %{"type" => "tool_result", "content" => content} = block,
-         session_cwd
+         session_cwd,
+         tool_use_index
        )
        when is_list(content) do
     tool_use_id = block["tool_use_id"]
     thread_key = tool_use_id || "unmatched-result"
+    group_key = tool_use_id || "group-#{:erlang.phash2(content)}"
+    inferred_lang = infer_result_language(tool_use_id, tool_use_index)
 
     content
     |> Enum.flat_map(fn
       %{"type" => "text", "text" => text} -> String.split(text, "\n")
       _ -> []
     end)
-    |> Enum.take(@max_result_lines)
     |> Enum.map(fn line ->
+      relativized = relativize_in_text(line, session_cwd)
+      {render_mode, code_language} = classify_result_line(relativized, inferred_lang)
+
       %{
-        line: "  ⎿  #{relativize_in_text(line, session_cwd)}",
+        line: "  ⎿  #{relativized}",
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
-        code_language: nil,
-        render_mode: :plain
+        tool_result_group: group_key,
+        code_language: code_language,
+        render_mode: render_mode
       }
     end)
   end
 
-  defp render_user_block_enriched(%{"type" => "tool_result"} = block, _session_cwd) do
+  defp render_user_block_enriched(
+         %{"type" => "tool_result"} = block,
+         _session_cwd,
+         _tool_use_index
+       ) do
     tool_use_id = block["tool_use_id"]
     thread_key = tool_use_id || "unmatched-result"
+    group_key = tool_use_id || "group-empty"
 
     [
       %{
@@ -253,17 +386,52 @@ defmodule Spotter.Services.TranscriptRenderer do
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
+        tool_result_group: group_key,
         code_language: nil,
         render_mode: :plain
       }
     ]
   end
 
-  defp render_user_block_enriched(%{"type" => "text", "text" => text}, _session_cwd) do
+  defp render_user_block_enriched(
+         %{"type" => "text", "text" => text},
+         _session_cwd,
+         _tool_use_index
+       ) do
     classify_text_lines(String.split(text, "\n"), :text)
   end
 
-  defp render_user_block_enriched(_block, _session_cwd), do: []
+  defp render_user_block_enriched(_block, _session_cwd, _tool_use_index), do: []
+
+  # ── Result line classification ──────────────────────────────────────
+
+  # Numbered read output (e.g., "  1→code here") → code with inferred language
+  @numbered_line_pattern ~r/^\s*\d+→/
+
+  defp classify_result_line(line, inferred_lang) do
+    if Regex.match?(@numbered_line_pattern, line) do
+      {:code, inferred_lang || "plaintext"}
+    else
+      {:plain, nil}
+    end
+  end
+
+  defp infer_result_language(nil, _index), do: nil
+
+  defp infer_result_language(tool_use_id, index) do
+    case Map.get(index, tool_use_id) do
+      %{name: "Read", input: %{"file_path" => path}} when is_binary(path) ->
+        language_from_extension(path)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp language_from_extension(path) do
+    ext = Path.extname(path)
+    Map.get(@extension_to_language, ext)
+  end
 
   # ── Code detection ─────────────────────────────────────────────────
 
@@ -439,7 +607,6 @@ defmodule Spotter.Services.TranscriptRenderer do
        when is_binary(content) do
     content
     |> String.split("\n")
-    |> Enum.take(@max_result_lines)
     |> Enum.map(&"  ⎿  #{&1}")
   end
 
@@ -450,7 +617,6 @@ defmodule Spotter.Services.TranscriptRenderer do
       %{"type" => "text", "text" => text} -> String.split(text, "\n")
       _ -> []
     end)
-    |> Enum.take(@max_result_lines)
     |> Enum.map(&"  ⎿  #{&1}")
   end
 

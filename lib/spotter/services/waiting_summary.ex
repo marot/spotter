@@ -9,7 +9,7 @@ defmodule Spotter.Services.WaitingSummary do
 
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.Message
+  alias LangChain.Message, as: LangMessage
   alias Spotter.Services.WaitingSummary.SliceBuilder
   alias Spotter.Transcripts.JsonlParser
 
@@ -104,25 +104,21 @@ defmodule Spotter.Services.WaitingSummary do
           api_key: anthropic_api_key()
         })
 
-      {:ok, chain} =
-        LLMChain.new(%{llm: llm})
+      {:ok, chain} = LLMChain.new(%{llm: llm})
 
       chain
-      |> LLMChain.add_message(Message.new_system!(system_prompt))
-      |> LLMChain.add_message(Message.new_user!(input_text))
+      |> LLMChain.add_message(LangMessage.new_system!(system_prompt))
+      |> LLMChain.add_message(LangMessage.new_user!(input_text))
       |> LLMChain.run(timeout: @llm_timeout)
       |> case do
-        {:ok, _chain, response} when is_struct(response) ->
-          {:ok, response.content |> to_string() |> String.trim()}
-
-        {:ok, _chain, nil} ->
-          {:error, :empty_response}
+        {:ok, updated_chain} ->
+          case updated_chain.last_message do
+            nil -> {:error, :empty_response}
+            msg -> {:ok, msg.content |> to_string() |> String.trim()}
+          end
 
         {:error, _chain, reason} ->
           {:error, reason}
-
-        other ->
-          {:error, {:unexpected_response, other}}
       end
     rescue
       e ->
