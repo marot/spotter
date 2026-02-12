@@ -46,6 +46,11 @@ defmodule Spotter.Transcripts do
         get :read
         index :read
       end
+
+      base_route "/file_heatmaps", Spotter.Transcripts.FileHeatmap do
+        get :read
+        index :read
+      end
     end
   end
 
@@ -60,5 +65,6 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.ToolCall
     resource Spotter.Transcripts.Commit
     resource Spotter.Transcripts.SessionCommitLink
+    resource Spotter.Transcripts.FileHeatmap
   end
 end

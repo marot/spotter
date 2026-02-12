@@ -8,6 +8,7 @@ defmodule Spotter.Transcripts.ResourcesTest do
     Annotation,
     AnnotationMessageRef,
     Commit,
+    FileHeatmap,
     Message,
     Project,
     Session,
@@ -224,6 +225,62 @@ defmodule Spotter.Transcripts.ResourcesTest do
         })
 
       assert link2.link_type == :patch_match
+    end
+  end
+
+  describe "FileHeatmap" do
+    setup do
+      project = Ash.create!(Project, %{name: "test-heatmap", pattern: "^test"})
+      %{project: project}
+    end
+
+    test "creates a file heatmap entry", %{project: project} do
+      heatmap =
+        Ash.create!(FileHeatmap, %{
+          project_id: project.id,
+          relative_path: "lib/foo.ex",
+          change_count_30d: 5,
+          heat_score: 42.5,
+          last_changed_at: ~U[2026-02-10 12:00:00Z]
+        })
+
+      assert heatmap.relative_path == "lib/foo.ex"
+      assert heatmap.change_count_30d == 5
+      assert heatmap.heat_score == 42.5
+    end
+
+    test "upserts by project + relative_path identity", %{project: project} do
+      attrs = %{
+        project_id: project.id,
+        relative_path: "lib/bar.ex",
+        change_count_30d: 3,
+        heat_score: 20.0
+      }
+
+      first = Ash.create!(FileHeatmap, attrs)
+      second = Ash.create!(FileHeatmap, %{attrs | change_count_30d: 7, heat_score: 55.0})
+
+      assert first.id == second.id
+      assert second.change_count_30d == 7
+      assert second.heat_score == 55.0
+    end
+
+    test "rejects heat_score outside 0.0-100.0 range", %{project: project} do
+      assert_raise Ash.Error.Invalid, fn ->
+        Ash.create!(FileHeatmap, %{
+          project_id: project.id,
+          relative_path: "lib/bad.ex",
+          heat_score: 101.0
+        })
+      end
+
+      assert_raise Ash.Error.Invalid, fn ->
+        Ash.create!(FileHeatmap, %{
+          project_id: project.id,
+          relative_path: "lib/bad.ex",
+          heat_score: -1.0
+        })
+      end
     end
   end
 
