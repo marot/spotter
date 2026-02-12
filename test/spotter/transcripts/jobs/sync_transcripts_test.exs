@@ -3,8 +3,8 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscriptsTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
-  alias Spotter.Transcripts.{JsonlParser, Project, Session, SessionRework}
   alias Spotter.Transcripts.Jobs.SyncTranscripts
+  alias Spotter.Transcripts.{JsonlParser, Project, Session, SessionRework}
 
   require Ash.Query
 
