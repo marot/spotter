@@ -4,6 +4,7 @@ defmodule SpotterWeb.SessionHookController do
 
   alias Spotter.Services.ActiveSessionRegistry
   alias Spotter.Services.SessionRegistry
+  alias Spotter.Transcripts.Jobs.SyncTranscripts
   alias Spotter.Transcripts.Sessions
   alias SpotterWeb.OtelTraceHelpers
 
@@ -25,8 +26,8 @@ defmodule SpotterWeb.SessionHookController do
       ActiveSessionRegistry.start_session(session_id, pane_id)
 
       case Sessions.find_or_create(session_id, cwd: params["cwd"]) do
-        {:ok, _session} ->
-          :ok
+        {:ok, session} ->
+          maybe_bootstrap_sync(session)
 
         {:error, reason} ->
           Logger.warning("Failed to create session #{session_id}: #{inspect(reason)}")
@@ -46,6 +47,12 @@ defmodule SpotterWeb.SessionHookController do
       |> put_status(:bad_request)
       |> OtelTraceHelpers.put_trace_response_header()
       |> json(%{error: "session_id and pane_id are required"})
+    end
+  end
+
+  defp maybe_bootstrap_sync(session) do
+    if is_nil(session.message_count) or session.message_count == 0 do
+      Task.start(fn -> SyncTranscripts.sync_session_by_id(session.session_id) end)
     end
   end
 

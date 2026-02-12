@@ -4,7 +4,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscriptsTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
   alias Spotter.Transcripts.Jobs.SyncTranscripts
-  alias Spotter.Transcripts.{JsonlParser, Project, Session, SessionRework}
+  alias Spotter.Transcripts.{JsonlParser, Message, Project, Session, SessionRework}
 
   require Ash.Query
 
@@ -104,6 +104,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscriptsTest do
 
     lines = [
       %{
+        "uuid" => "#{session_id}-system",
         "type" => "system",
         "sessionId" => session_id,
         "cwd" => "/tmp/test",
@@ -111,6 +112,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscriptsTest do
         "timestamp" => "2026-02-01T12:00:00Z"
       },
       %{
+        "uuid" => "#{session_id}-user-1",
         "type" => "human",
         "role" => "user",
         "content" => [%{"type" => "text", "text" => "hello"}],
@@ -124,6 +126,78 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscriptsTest do
 
     File.write!(path, content)
     path
+  end
+
+  describe "sync_session_file/2" do
+    test "ingests messages from a JSONL file", %{tmp_dir: tmp_dir} do
+      session_id = Ash.UUID.generate()
+      dir = Path.join(tmp_dir, "test-project")
+      file = write_session_jsonl(dir, session_id)
+
+      result = SyncTranscripts.sync_session_file(file)
+
+      assert result.status == :ok
+      assert result.session_id == session_id
+      assert result.ingested_messages > 0
+    end
+
+    test "is idempotent — repeated sync does not duplicate messages", %{tmp_dir: tmp_dir} do
+      session_id = Ash.UUID.generate()
+      dir = Path.join(tmp_dir, "test-project")
+      file = write_session_jsonl(dir, session_id)
+
+      SyncTranscripts.sync_session_file(file)
+      result = SyncTranscripts.sync_session_file(file)
+
+      assert result.status == :ok
+
+      # Count messages in DB — should not be duplicated
+      session = Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one!()
+
+      db_messages =
+        Message
+        |> Ash.Query.filter(session_id == ^session.id)
+        |> Ash.read!()
+
+      assert length(db_messages) == result.ingested_messages
+    end
+
+    test "backfills transcript_dir on existing session", %{session: session, tmp_dir: tmp_dir} do
+      dir = Path.join(tmp_dir, "backfill-dir")
+      file = write_session_jsonl(dir, session.session_id)
+
+      SyncTranscripts.sync_session_file(file)
+
+      updated = Session |> Ash.Query.filter(session_id == ^session.session_id) |> Ash.read_one!()
+      assert updated.transcript_dir == "backfill-dir"
+    end
+
+    test "returns :not_found for file without session_id", %{tmp_dir: tmp_dir} do
+      dir = Path.join(tmp_dir, "no-session")
+      File.mkdir_p!(dir)
+      path = Path.join(dir, "empty.jsonl")
+
+      File.write!(
+        path,
+        Jason.encode!(%{"type" => "system", "timestamp" => "2026-02-01T12:00:00Z"})
+      )
+
+      result = SyncTranscripts.sync_session_file(path)
+      assert result.status == :not_found
+    end
+
+    test "returns :error for nonexistent file" do
+      result = SyncTranscripts.sync_session_file("/nonexistent/path.jsonl")
+      assert result.status == :error
+    end
+  end
+
+  describe "sync_session_by_id/2" do
+    test "returns :not_found when no transcript file exists" do
+      result = SyncTranscripts.sync_session_by_id(Ash.UUID.generate())
+      assert result.status == :not_found
+      assert result.ingested_messages == 0
+    end
   end
 
   describe "perform/1 with data" do

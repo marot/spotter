@@ -13,6 +13,7 @@ defmodule SpotterWeb.SessionLive do
     Annotation,
     AnnotationMessageRef,
     Commit,
+    Jobs.SyncTranscripts,
     Message,
     Session,
     SessionCommitLink,
@@ -397,6 +398,7 @@ defmodule SpotterWeb.SessionLive do
   defp load_transcript(session_id) do
     case Session |> Ash.Query.filter(session_id == ^session_id) |> Ash.read_one() do
       {:ok, %Session{} = session} ->
+        session = maybe_bootstrap_sync(session)
         messages = load_session_messages(session)
         opts = if session.cwd, do: [session_cwd: session.cwd], else: []
         {session, messages, TranscriptRenderer.render(messages, opts)}
@@ -407,6 +409,23 @@ defmodule SpotterWeb.SessionLive do
   rescue
     _ -> {nil, [], []}
   end
+
+  defp maybe_bootstrap_sync(%Session{message_count: count} = session)
+       when is_nil(count) or count == 0 do
+    case SyncTranscripts.sync_session_by_id(session.session_id) do
+      %{status: :ok} ->
+        # Reload session to get updated attributes
+        case Session |> Ash.Query.filter(session_id == ^session.session_id) |> Ash.read_one() do
+          {:ok, %Session{} = refreshed} -> refreshed
+          _ -> session
+        end
+
+      _ ->
+        session
+    end
+  end
+
+  defp maybe_bootstrap_sync(session), do: session
 
   defp load_errors(nil), do: []
 
