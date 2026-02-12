@@ -11,12 +11,81 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
   alias Spotter.Transcripts.Jobs.ComputeCoChange
   alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.JsonlParser
+  alias Spotter.Transcripts.Session
+  alias Spotter.Transcripts.Sessions
   alias Spotter.Transcripts.SessionsIndex
 
   require Ash.Query
 
   @batch_size 500
   @max_sessions_per_sync 20
+
+  @doc """
+  Syncs a single session by its session_id.
+
+  Locates the transcript JSONL file by scanning configured transcript directories,
+  then ingests messages and metadata for that session only.
+
+  Returns `%{session_id: ..., ingested_messages: n, status: :ok | :not_found | :error}`.
+  """
+  def sync_session_by_id(session_id, opts \\ []) do
+    case find_transcript_file(session_id) do
+      {:ok, file_path} ->
+        sync_session_file(file_path, opts)
+
+      :not_found ->
+        %{session_id: session_id, ingested_messages: 0, status: :not_found}
+    end
+  end
+
+  @doc """
+  Syncs a single session from a specific JSONL file path.
+
+  Parses the file, upserts the session record, and ingests messages idempotently.
+
+  Returns `%{session_id: ..., ingested_messages: n, status: :ok | :not_found | :error}`.
+  """
+  def sync_session_file(file_path, _opts \\ []) do
+    case JsonlParser.parse_session_file(file_path) do
+      {:ok, %{session_id: nil}} ->
+        %{session_id: nil, ingested_messages: 0, status: :not_found}
+
+      {:ok, parsed} ->
+        dir = Path.dirname(file_path)
+        transcript_dir = Path.basename(dir)
+        index = SessionsIndex.read(dir)
+        index_meta = Map.get(index, parsed.session_id, %{})
+
+        # Ensure session and project exist
+        session_record =
+          case Session |> Ash.Query.filter(session_id == ^parsed.session_id) |> Ash.read_one!() do
+            %Session{} = existing ->
+              existing
+
+            nil ->
+              {:ok, stub} = Sessions.find_or_create(parsed.session_id, cwd: parsed.cwd)
+              stub
+          end
+
+        # Upsert session with full metadata + transcript_dir backfill
+        session = upsert_existing_session!(session_record, transcript_dir, parsed, index_meta)
+
+        ingested = upsert_messages!(session, parsed.messages)
+        create_tool_calls!(session, parsed.messages)
+        create_session_reworks!(session, parsed)
+        sync_subagents(session, dir, parsed.session_id)
+
+        %{session_id: parsed.session_id, ingested_messages: ingested, status: :ok}
+
+      {:error, reason} ->
+        Logger.warning("Failed to parse #{file_path}: #{inspect(reason)}")
+        %{session_id: nil, ingested_messages: 0, status: :error}
+    end
+  rescue
+    e ->
+      Logger.warning("Error syncing #{file_path}: #{Exception.message(e)}")
+      %{session_id: nil, ingested_messages: 0, status: :error}
+  end
 
   @doc """
   Enqueues sync jobs for all configured projects.
@@ -462,6 +531,81 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
         Ash.bulk_create!(batch, Spotter.Transcripts.Message, :create)
       end)
     end
+  end
+
+  defp find_transcript_file(session_id) do
+    config = Config.read!()
+    transcripts_dir = config.transcripts_dir
+
+    transcripts_dir
+    |> list_subdirectories()
+    |> Enum.find_value(:not_found, fn dir ->
+      file = Path.join(dir, "#{session_id}.jsonl")
+      if File.exists?(file), do: {:ok, file}
+    end)
+  end
+
+  defp list_subdirectories(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.map(&Path.join(dir, &1))
+        |> Enum.filter(&File.dir?/1)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp upsert_existing_session!(session_record, transcript_dir, parsed, index_meta) do
+    base_attrs = %{
+      slug: parsed.slug,
+      cwd: parsed.cwd,
+      git_branch: parsed.git_branch,
+      version: parsed.version,
+      started_at: parsed.started_at,
+      ended_at: parsed.ended_at,
+      schema_version: parsed.schema_version,
+      message_count: length(parsed.messages),
+      transcript_dir: transcript_dir,
+      custom_title: index_meta[:custom_title],
+      summary: index_meta[:summary],
+      first_prompt: index_meta[:first_prompt],
+      source_created_at: index_meta[:source_created_at],
+      source_modified_at: index_meta[:source_modified_at]
+    }
+
+    update_attrs = apply_timestamp_fallbacks(base_attrs, session_record)
+    Ash.update!(session_record, update_attrs)
+  end
+
+  defp upsert_messages!(session, messages) do
+    msg_attrs =
+      messages
+      |> Enum.filter(& &1[:timestamp])
+      |> Enum.map(fn msg ->
+        %{
+          uuid: msg[:uuid] || Ash.UUID.generate(),
+          parent_uuid: msg[:parent_uuid],
+          message_id: msg[:message_id],
+          type: msg[:type],
+          role: msg[:role],
+          content: msg[:content],
+          timestamp: msg[:timestamp],
+          is_sidechain: msg[:is_sidechain] || false,
+          agent_id: msg[:agent_id],
+          tool_use_id: msg[:tool_use_id],
+          session_id: session.id
+        }
+      end)
+
+    msg_attrs
+    |> Enum.chunk_every(@batch_size)
+    |> Enum.each(fn batch ->
+      Ash.bulk_create!(batch, Spotter.Transcripts.Message, :upsert)
+    end)
+
+    length(msg_attrs)
   end
 
   defp upsert_subagent!(session, parsed) do

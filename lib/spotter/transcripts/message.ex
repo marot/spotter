@@ -35,6 +35,27 @@ defmodule Spotter.Transcripts.Message do
         :subagent_id
       ]
     end
+
+    create :upsert do
+      accept [
+        :uuid,
+        :parent_uuid,
+        :message_id,
+        :type,
+        :role,
+        :content,
+        :timestamp,
+        :is_sidechain,
+        :agent_id,
+        :tool_use_id,
+        :session_id,
+        :subagent_id
+      ]
+
+      upsert? true
+      upsert_identity :unique_session_uuid
+      upsert_fields [:content, :type, :role]
+    end
   end
 
   attributes do
@@ -93,5 +114,9 @@ defmodule Spotter.Transcripts.Message do
     end
 
     has_many :annotation_refs, Spotter.Transcripts.AnnotationMessageRef
+  end
+
+  identities do
+    identity :unique_session_uuid, [:session_id, :uuid]
   end
 end

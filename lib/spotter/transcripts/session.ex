@@ -50,6 +50,7 @@ defmodule Spotter.Transcripts.Session do
 
       accept [
         :slug,
+        :transcript_dir,
         :cwd,
         :git_branch,
         :version,
