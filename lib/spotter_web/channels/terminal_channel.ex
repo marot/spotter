@@ -8,17 +8,29 @@ defmodule SpotterWeb.TerminalChannel do
   use Phoenix.Channel
 
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   alias Spotter.Services.Tmux
   alias Spotter.Services.TmuxOutput
 
   @impl true
   def join("terminal:debug", _params, socket) do
+    span_event("spotter.channel.join", %{
+      "spotter.channel.topic" => "terminal:debug",
+      "spotter.mode" => "debug"
+    })
+
     send(self(), :start_debug_shell)
     {:ok, %{initial_content: ""}, assign(socket, :mode, :debug)}
   end
 
   def join("terminal:" <> pane_id, _params, socket) do
+    span_event("spotter.channel.join", %{
+      "spotter.pane_id" => pane_id,
+      "spotter.channel.topic" => "terminal:#{pane_id}",
+      "spotter.mode" => "tmux"
+    })
+
     if Tmux.pane_exists?(pane_id) do
       send(self(), :start_streaming)
 
@@ -30,12 +42,14 @@ defmodule SpotterWeb.TerminalChannel do
 
       {:ok, %{initial_content: initial_content}, assign(socket, pane_id: pane_id, mode: :tmux)}
     else
+      span_error("pane_not_found")
       {:error, %{reason: "pane not found"}}
     end
   end
 
   @impl true
   def handle_info(:start_debug_shell, socket) do
+    span_event("spotter.channel.stream_start", %{"spotter.mode" => "debug"})
     shell = System.find_executable("bash") || System.find_executable("sh")
 
     port =
@@ -58,6 +72,11 @@ defmodule SpotterWeb.TerminalChannel do
 
   def handle_info(:start_streaming, socket) do
     pane_id = socket.assigns.pane_id
+
+    span_event("spotter.channel.stream_start", %{
+      "spotter.pane_id" => pane_id,
+      "spotter.mode" => "tmux"
+    })
 
     port =
       Port.open(
@@ -103,11 +122,17 @@ defmodule SpotterWeb.TerminalChannel do
         {port, {:exit_status, _status}},
         %{assigns: %{port: port, mode: :debug}} = socket
       ) do
+    span_event("spotter.channel.stream_exit", %{"spotter.mode" => "debug"})
     Logger.info("Debug shell exited")
     {:stop, :normal, socket}
   end
 
   def handle_info({port, {:exit_status, _status}}, %{assigns: %{port: port}} = socket) do
+    span_event("spotter.channel.stream_exit", %{
+      "spotter.pane_id" => socket.assigns.pane_id,
+      "spotter.mode" => "tmux"
+    })
+
     Logger.info("tmux control mode exited for pane #{socket.assigns.pane_id}")
     {:stop, :normal, socket}
   end
@@ -118,22 +143,33 @@ defmodule SpotterWeb.TerminalChannel do
 
   @impl true
   def handle_in("input", %{"data" => data}, %{assigns: %{mode: :debug}} = socket) do
+    span_event("spotter.channel.input", %{"spotter.mode" => "debug"})
     Port.command(socket.assigns.port, data)
     {:noreply, socket}
   end
 
   def handle_in("input", %{"data" => data}, socket) do
+    span_event("spotter.channel.input", %{
+      "spotter.pane_id" => socket.assigns.pane_id,
+      "spotter.mode" => "tmux"
+    })
+
     Tmux.send_keys(socket.assigns.pane_id, data)
     {:noreply, socket}
   end
 
   def handle_in("resize", _params, %{assigns: %{mode: :debug}} = socket) do
-    # PTY resize not supported for debug shell via script
+    span_event("spotter.channel.resize", %{"spotter.mode" => "debug"})
     {:noreply, socket}
   end
 
   def handle_in("resize", %{"cols" => cols, "rows" => rows}, socket) do
     pane_id = socket.assigns.pane_id
+
+    span_event("spotter.channel.resize", %{
+      "spotter.pane_id" => pane_id,
+      "spotter.mode" => "tmux"
+    })
 
     System.cmd(
       "tmux",
@@ -186,5 +222,17 @@ defmodule SpotterWeb.TerminalChannel do
     Regex.replace(~r/\\(\d{3})/, str, fn _, octal ->
       <<String.to_integer(octal, 8)>>
     end)
+  end
+
+  defp span_event(name, attrs) do
+    Tracer.add_event(name, Map.to_list(attrs))
+  rescue
+    _error -> :ok
+  end
+
+  defp span_error(reason) do
+    Tracer.set_status(:error, reason)
+  rescue
+    _error -> :ok
   end
 end

@@ -4,11 +4,13 @@ defmodule Spotter.Application do
   use Application
 
   alias Spotter.Telemetry.Otel
+  alias SpotterWeb.Telemetry.LiveviewOtel
 
   @impl true
   def start(_type, _args) do
     # Initialize OpenTelemetry before starting children
     Otel.setup()
+    LiveviewOtel.setup()
 
     children = [
       {Phoenix.PubSub, name: Spotter.PubSub},
