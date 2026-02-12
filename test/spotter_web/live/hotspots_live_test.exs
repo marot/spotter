@@ -1,6 +1,7 @@
 defmodule SpotterWeb.HotspotsLiveTest do
   use ExUnit.Case, async: false
 
+  import Ecto.Query
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
@@ -99,6 +100,32 @@ defmodule SpotterWeb.HotspotsLiveTest do
 
       assert html =~ "Heatmap"
       assert html =~ "Co-change"
+      assert html =~ "Run scoring"
+    end
+
+    test "hides run scoring button when no project selected" do
+      {:ok, _view, html} = live(build_conn(), "/hotspots")
+      refute html =~ "Run scoring"
+    end
+  end
+
+  describe "manual scoring trigger" do
+    test "run_scoring event enqueues ScoreHotspots for selected project" do
+      project = create_project("hotspots-run-scoring")
+      project_id = project.id
+
+      {:ok, view, _html} = live(build_conn(), "/hotspots?project_id=#{project_id}")
+      _html = render_click(view, "run_scoring", %{})
+
+      jobs =
+        Repo.all(
+          from(j in Oban.Job,
+            where: j.worker == "Spotter.Transcripts.Jobs.ScoreHotspots",
+            where: j.state == "available"
+          )
+        )
+
+      assert Enum.any?(jobs, &(&1.args == %{"project_id" => project_id}))
     end
   end
 end

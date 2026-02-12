@@ -2,8 +2,10 @@ defmodule SpotterWeb.HotspotsLive do
   use Phoenix.LiveView
 
   alias Spotter.Transcripts.{CodeHotspot, Project}
+  alias Spotter.Transcripts.Jobs.ScoreHotspots
 
   require Ash.Query
+  require OpenTelemetry.Tracer, as: Tracer
 
   @max_rows 100
 
@@ -63,6 +65,27 @@ defmodule SpotterWeb.HotspotsLive do
      socket
      |> assign(sort_by: sort_by)
      |> load_hotspots()}
+  end
+
+  def handle_event("run_scoring", _params, %{assigns: %{selected_project_id: nil}} = socket) do
+    {:noreply, put_flash(socket, :error, "Select a project to run hotspot scoring.")}
+  end
+
+  def handle_event("run_scoring", _params, socket) do
+    project_id = socket.assigns.selected_project_id
+
+    Tracer.with_span "spotter.hotspots_live.run_scoring" do
+      Tracer.set_attribute("spotter.project_id", project_id)
+
+      case %{project_id: project_id} |> ScoreHotspots.new() |> Oban.insert() do
+        {:ok, _job} ->
+          {:noreply, put_flash(socket, :info, "Hotspot scoring queued for this project.")}
+
+        {:error, reason} ->
+          Tracer.set_status(:error, "enqueue_error: #{inspect(reason)}")
+          {:noreply, put_flash(socket, :error, "Failed to queue hotspot scoring.")}
+      end
+    end
   end
 
   defp load_hotspots(socket) do
@@ -151,6 +174,9 @@ defmodule SpotterWeb.HotspotsLive do
       <div class="page-header">
         <h1>AI Hotspots</h1>
         <div>
+          <button :if={@selected_project_id} phx-click="run_scoring" class="btn">
+            Run scoring
+          </button>
           <a :if={@selected_project_id} href={"/projects/#{@selected_project_id}/heatmap"} class="btn btn-ghost">Heatmap</a>
           <a :if={@selected_project_id} href={"/co-change?project_id=#{@selected_project_id}"} class="btn btn-ghost">Co-change</a>
         </div>
