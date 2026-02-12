@@ -227,14 +227,15 @@ defmodule SpotterWeb.PaneViewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="header">
-      <a href="/">&larr; Back</a>
-      <span>Pane: {@pane_id}</span>
-      <span :if={@session_id} style="color: #64b5f6; margin-left: 1rem; font-size: 0.85em;">
+    <div class="breadcrumb">
+      <a href="/">Dashboard</a>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">Pane {@pane_id}</span>
+      <span :if={@session_id} class="breadcrumb-meta">
         Session: {String.slice(@session_id, 0..7)}
       </span>
     </div>
-    <div style="display: flex; gap: 0; height: calc(100vh - 50px);">
+    <div style="display: flex; gap: 0; height: calc(100vh - 37px);">
       <div style="flex: 2; overflow-x: auto; padding: 1rem;">
         <div style="display: inline-block; min-width: 100%;">
           <div
