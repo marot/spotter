@@ -128,6 +128,35 @@ defmodule SpotterWeb.HistoryLive do
     Calendar.strftime(dt, "%Y-%m-%d %H:%M")
   end
 
+  @conventional_commit_emojis %{
+    "feat" => "\u2728",
+    "fix" => "\U0001F41B",
+    "chore" => "\U0001F9F9",
+    "docs" => "\U0001F4DD",
+    "refactor" => "\u267B\uFE0F",
+    "test" => "\u2705",
+    "perf" => "\u26A1",
+    "ci" => "\U0001F916",
+    "build" => "\U0001F4E6",
+    "revert" => "\u23EA",
+    "style" => "\U0001F3A8"
+  }
+
+  defp emojify_subject(nil), do: "(no subject)"
+
+  defp emojify_subject(subject) do
+    case Regex.run(~r/^(\w+)(?:\([^)]*\))?:\s*(.*)$/i, subject) do
+      [_full, type, rest] ->
+        case Map.get(@conventional_commit_emojis, String.downcase(type)) do
+          nil -> subject
+          emoji -> "#{emoji} #{rest}"
+        end
+
+      _ ->
+        subject
+    end
+  end
+
   defp badge_text(:observed_in_session, _confidence), do: "Verified"
 
   defp badge_text(_type, confidence) do
@@ -199,9 +228,17 @@ defmodule SpotterWeb.HistoryLive do
             <code class="history-commit-hash">
               {String.slice(row.commit.commit_hash, 0, 8)}
             </code>
-            <span class="history-commit-subject">
-              {row.commit.subject || "(no subject)"}
-            </span>
+            <div class="history-commit-message">
+              <span class="history-commit-subject">
+                {emojify_subject(row.commit.subject)}
+              </span>
+              <div
+                :if={row.commit.body not in [nil, ""]}
+                class="history-commit-body"
+              >
+                {row.commit.body}
+              </div>
+            </div>
             <span class="history-commit-branch">
               {row.commit.git_branch || "\u2014"}
             </span>
@@ -210,6 +247,9 @@ defmodule SpotterWeb.HistoryLive do
             </span>
           </div>
 
+          <%= if row.sessions == [] do %>
+            <div class="history-session-empty">No linked sessions.</div>
+          <% else %>
           <div :for={entry <- row.sessions} class="history-session-entry">
             <a href={"/sessions/#{entry.session.session_id}"} class="history-session-link">
               {entry.session.slug || String.slice(to_string(entry.session.session_id), 0, 8)}
@@ -224,6 +264,7 @@ defmodule SpotterWeb.HistoryLive do
               {badge_text(link_type, entry.max_confidence)}
             </span>
           </div>
+          <% end %>
         </div>
 
         <%= if @has_more do %>

@@ -25,20 +25,14 @@ defmodule Spotter.Services.CommitHistory do
     project_id = filters[:project_id]
     branch = filters[:branch]
 
-    commit_ids = linked_commit_ids(project_id)
+    commits = load_commits(branch)
+    sorted = sort_commits(commits)
+    after_cursor = apply_cursor(sorted, cursor)
+    {page, has_more} = paginate(after_cursor, limit)
+    rows = build_rows(page, project_id)
+    next_cursor = if has_more && page != [], do: encode_cursor(List.last(page)), else: nil
 
-    if MapSet.size(commit_ids) == 0 do
-      %{rows: [], has_more: false, cursor: nil}
-    else
-      commits = load_filtered_commits(commit_ids, branch)
-      sorted = sort_commits(commits)
-      after_cursor = apply_cursor(sorted, cursor)
-      {page, has_more} = paginate(after_cursor, limit)
-      rows = build_rows(page, project_id)
-      next_cursor = if has_more && page != [], do: encode_cursor(List.last(page)), else: nil
-
-      %{rows: rows, has_more: has_more, cursor: next_cursor}
-    end
+    %{rows: rows, has_more: has_more, cursor: next_cursor}
   end
 
   @doc """
@@ -86,28 +80,8 @@ defmodule Spotter.Services.CommitHistory do
     |> elem(0)
   end
 
-  defp linked_commit_ids(nil) do
-    SessionCommitLink
-    |> Ash.read!()
-    |> MapSet.new(& &1.commit_id)
-  end
-
-  defp linked_commit_ids(project_id) do
-    session_ids =
-      Session
-      |> Ash.Query.filter(project_id == ^project_id)
-      |> Ash.Query.select([:id])
-      |> Ash.read!()
-      |> Enum.map(& &1.id)
-
-    SessionCommitLink
-    |> Ash.Query.filter(session_id in ^session_ids)
-    |> Ash.read!()
-    |> MapSet.new(& &1.commit_id)
-  end
-
-  defp load_filtered_commits(commit_ids, branch) do
-    query = Commit |> Ash.Query.filter(id in ^MapSet.to_list(commit_ids))
+  defp load_commits(branch) do
+    query = Commit
 
     query =
       if branch do
@@ -189,7 +163,6 @@ defmodule Spotter.Services.CommitHistory do
 
       %{commit: commit, sessions: session_entries}
     end)
-    |> Enum.reject(fn row -> Enum.empty?(row.sessions) end)
   end
 
   defp filter_links_by_project(links, nil), do: links

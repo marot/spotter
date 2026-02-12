@@ -104,13 +104,12 @@ defmodule Spotter.Services.CommitHistoryTest do
   # -- list_commits_with_sessions/2 ------------------------------------------
 
   describe "list_commits_with_sessions/2" do
-    test "returns empty when no links exist" do
+    test "returns commit rows even when no links exist" do
       create_commit(branch: "main", hash: "f1")
 
-      result = CommitHistory.list_commits_with_sessions()
-      assert result.rows == []
-      assert result.has_more == false
-      assert result.cursor == nil
+      result = CommitHistory.list_commits_with_sessions(%{branch: "main"})
+      assert length(result.rows) == 1
+      assert hd(result.rows).sessions == []
     end
 
     test "returns commits with session entries" do
@@ -190,7 +189,7 @@ defmodule Spotter.Services.CommitHistoryTest do
       assert hd(hd(result.rows).sessions).project.id == proj_a.id
     end
 
-    test "project filter with no matching sessions returns empty" do
+    test "project filter with no matching sessions still returns commit rows" do
       proj_a = create_project("proj-empty")
       proj_b = create_project("proj-with-data")
       sess_b = create_session(proj_b)
@@ -199,8 +198,8 @@ defmodule Spotter.Services.CommitHistoryTest do
       create_link(sess_b, commit)
 
       result = CommitHistory.list_commits_with_sessions(%{project_id: proj_a.id})
-      assert result.rows == []
-      assert result.has_more == false
+      assert length(result.rows) == 1
+      assert hd(result.rows).sessions == []
     end
 
     test "multiple sessions per commit" do

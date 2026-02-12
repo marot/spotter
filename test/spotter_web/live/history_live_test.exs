@@ -30,13 +30,17 @@ defmodule SpotterWeb.HistoryLiveTest do
   end
 
   defp create_commit(opts) do
-    Ash.create!(Commit, %{
+    attrs = %{
       commit_hash: opts[:hash] || Ash.UUID.generate(),
       git_branch: opts[:branch],
       subject: opts[:subject],
       committed_at: opts[:committed_at],
       parent_hashes: opts[:parent_hashes] || []
-    })
+    }
+
+    attrs = if opts[:body], do: Map.put(attrs, :body, opts[:body]), else: attrs
+
+    Ash.create!(Commit, attrs)
   end
 
   defp create_link(session, commit, opts \\ []) do
@@ -217,8 +221,7 @@ defmodule SpotterWeb.HistoryLiveTest do
   end
 
   describe "empty state" do
-    test "renders exact empty state copy when no matches" do
-      # Create a project with data but filter to a project with none
+    test "project-filtered commit with no sessions shows No linked sessions" do
       proj_a = create_project("empty-proj-a")
       proj_b = create_project("empty-proj-b")
       sess_a = create_session(proj_a)
@@ -234,10 +237,56 @@ defmodule SpotterWeb.HistoryLiveTest do
 
       {:ok, view, _html} = live(build_conn(), "/history?branch=")
 
-      # Filter to project with no data
+      # Filter to project with no matching sessions - commit still renders
       html = render_click(view, "filter_project", %{"project-id" => proj_b.id})
 
-      assert html =~ "No commits found for the selected filters."
+      assert html =~ "es-commi"
+      assert html =~ "No linked sessions."
+    end
+  end
+
+  describe "conventional commit emojis" do
+    test "feat(parser): parse body renders as sparkles emoji" do
+      project = create_project("emoji-proj")
+      session = create_session(project)
+
+      commit =
+        create_commit(
+          branch: nil,
+          hash: "emoji-commit",
+          committed_at: ~U[2026-01-01 12:00:00Z],
+          subject: "feat(parser): parse body"
+        )
+
+      create_link(session, commit)
+
+      {:ok, _view, html} = live(build_conn(), "/history?branch=")
+
+      assert html =~ "\u2728 parse body"
+      refute html =~ "feat(parser):"
+    end
+  end
+
+  describe "commit body rendering" do
+    test "multi-line commit body is rendered" do
+      project = create_project("body-proj")
+      session = create_session(project)
+
+      commit =
+        create_commit(
+          branch: nil,
+          hash: "body-commit",
+          committed_at: ~U[2026-01-01 12:00:00Z],
+          subject: "chore: add stuff",
+          body: "First line of body\nSecond line of body"
+        )
+
+      create_link(session, commit)
+
+      {:ok, _view, html} = live(build_conn(), "/history?branch=")
+
+      assert html =~ "First line of body"
+      assert html =~ "Second line of body"
     end
   end
 

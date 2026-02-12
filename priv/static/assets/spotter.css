@@ -606,6 +606,26 @@ input::placeholder, textarea::placeholder {
   font-size: var(--text-xs);
 }
 
+.history-commit-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-commit-body {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+}
+
+.history-session-empty {
+  margin-left: var(--space-6);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .history-session-entry {
   margin-left: var(--space-6);
   padding: var(--space-2) 0;
