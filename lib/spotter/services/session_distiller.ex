@@ -6,7 +6,7 @@ defmodule Spotter.Services.SessionDistiller do
 
       config :spotter, :session_distiller_adapter, MyAdapter
 
-  The default adapter calls Claude via LangChain.
+  The default adapter calls Claude via `claude_agent_sdk`.
   """
 
   @callback distill(pack :: map(), opts :: keyword()) ::
@@ -30,7 +30,7 @@ defmodule Spotter.Services.SessionDistiller do
     Application.get_env(
       :spotter,
       :session_distiller_adapter,
-      Spotter.Services.SessionDistiller.Anthropic
+      Spotter.Services.SessionDistiller.ClaudeCode
     )
   end
 end

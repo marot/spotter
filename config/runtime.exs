@@ -17,9 +17,6 @@ import Config
 # SPOTTER_ROLLUP_BUCKET_KIND - bucket granularity: day, week, or month (default: week)
 # SPOTTER_ROLLUP_LOOKBACK_DAYS - rolling summary lookback window in days (default: 30)
 
-# LangChain consumes :langchain, :anthropic_key for ChatAnthropic API calls
-config :langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY")
-
 # Product Spec (Dolt) configuration
 config :spotter, Spotter.ProductSpec.Repo,
   hostname: System.get_env("SPOTTER_DOLT_HOST", "localhost"),

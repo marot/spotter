@@ -3,21 +3,17 @@ defmodule Spotter.Services.WaitingSummary do
   Generates concise waiting-state summaries from Claude session transcripts.
 
   Reads a transcript file, slices messages within a configurable character budget,
-  and calls a Haiku model to produce a short summary suitable for tmux overlay display.
-  Falls back to a deterministic summary on any LLM/parse failure.
+  and calls Claude via `claude_agent_sdk` to produce a short summary suitable for
+  tmux overlay display. Falls back to a deterministic summary on any failure.
   """
 
-  alias LangChain.Chains.LLMChain
-  alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.Message, as: LangMessage
   alias Spotter.Config.Runtime
-  alias Spotter.Services.LlmCredentials
+  alias Spotter.Services.ClaudeCode.Client
   alias Spotter.Services.WaitingSummary.SliceBuilder
   alias Spotter.Transcripts.JsonlParser
 
   require Logger
-
-  @llm_timeout 15_000
+  require OpenTelemetry.Tracer, as: Tracer
 
   @type summary_result :: %{
           summary: String.t(),
@@ -43,7 +39,7 @@ defmodule Spotter.Services.WaitingSummary do
     with {:ok, parsed} <- parse_transcript(transcript_path),
          messages = parsed.messages,
          {sliced, window_meta} <- SliceBuilder.build(messages, budget: budget) do
-      summary = generate_summary(sliced, model, parsed.session_id, messages)
+      summary = generate_summary(sliced, model, parsed.session_id, messages, window_meta)
 
       {:ok,
        %{
@@ -68,29 +64,28 @@ defmodule Spotter.Services.WaitingSummary do
     end
   end
 
-  defp generate_summary(sliced_messages, model, session_id, all_messages) do
-    case call_llm(sliced_messages, model) do
-      {:ok, text} ->
-        text
+  defp generate_summary(sliced_messages, model, session_id, all_messages, window_meta) do
+    Tracer.with_span "spotter.waiting_summary.llm" do
+      Tracer.set_attribute("spotter.model", model)
+      Tracer.set_attribute("spotter.input_chars", window_meta.input_chars)
 
-      {:error, reason} ->
-        Logger.warning("WaitingSummary: LLM call failed: #{inspect(reason)}, using fallback")
-        build_fallback_summary(session_id, all_messages)
+      case call_llm(sliced_messages, model) do
+        {:ok, text} ->
+          text
+
+        {:error, reason} ->
+          Logger.warning("WaitingSummary: LLM call failed: #{inspect(reason)}, using fallback")
+
+          Tracer.set_status(:error, inspect(reason))
+          build_fallback_summary(session_id, all_messages)
+      end
     end
   end
 
   defp call_llm([], _model), do: {:error, :no_messages}
 
   defp call_llm(messages, model) do
-    case LlmCredentials.anthropic_api_key() do
-      {:error, :missing_api_key} -> {:error, :missing_api_key}
-      {:ok, api_key} -> call_llm_with_key(messages, model, api_key)
-    end
-  end
-
-  defp call_llm_with_key(messages, model, api_key) do
-    input_text =
-      Enum.map_join(messages, "\n", &SliceBuilder.message_text/1)
+    input_text = Enum.map_join(messages, "\n", &SliceBuilder.message_text/1)
 
     system_prompt = """
     You are summarizing a Claude Code session for a tmux overlay notification.
@@ -102,34 +97,9 @@ defmodule Spotter.Services.WaitingSummary do
     Keep it actionable and scannable. No markdown formatting.
     """
 
-    try do
-      {:ok, llm} =
-        ChatAnthropic.new(%{
-          model: model,
-          max_tokens: 200,
-          temperature: 0.0,
-          api_key: api_key
-        })
-
-      {:ok, chain} = LLMChain.new(%{llm: llm})
-
-      chain
-      |> LLMChain.add_message(LangMessage.new_system!(system_prompt))
-      |> LLMChain.add_message(LangMessage.new_user!(input_text))
-      |> LLMChain.run(timeout: @llm_timeout)
-      |> case do
-        {:ok, updated_chain} ->
-          case updated_chain.last_message do
-            nil -> {:error, :empty_response}
-            msg -> {:ok, msg.content |> to_string() |> String.trim()}
-          end
-
-        {:error, _chain, reason} ->
-          {:error, reason}
-      end
-    rescue
-      e ->
-        {:error, {:exception, Exception.message(e)}}
+    case Client.query_text(system_prompt, input_text, model: model, timeout_ms: 15_000) do
+      {:ok, %{text: text}} -> {:ok, String.trim(text)}
+      {:error, reason} -> {:error, reason}
     end
   end
 

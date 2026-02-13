@@ -26,7 +26,7 @@ defmodule Spotter.Services.ProjectRollupDistiller do
     Application.get_env(
       :spotter,
       :project_rollup_distiller_adapter,
-      Spotter.Services.ProjectRollupDistiller.Anthropic
+      Spotter.Services.ProjectRollupDistiller.ClaudeCode
     )
   end
 end

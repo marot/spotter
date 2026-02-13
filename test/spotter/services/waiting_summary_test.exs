@@ -76,17 +76,11 @@ defmodule Spotter.Services.WaitingSummaryTest do
 
   describe "generate/2 missing API key regression" do
     setup do
-      prev_app = Application.get_env(:langchain, :anthropic_key)
       prev_env = System.get_env("ANTHROPIC_API_KEY")
 
-      Application.delete_env(:langchain, :anthropic_key)
       System.delete_env("ANTHROPIC_API_KEY")
 
       on_exit(fn ->
-        if prev_app,
-          do: Application.put_env(:langchain, :anthropic_key, prev_app),
-          else: Application.delete_env(:langchain, :anthropic_key)
-
         if prev_env,
           do: System.put_env("ANTHROPIC_API_KEY", prev_env),
           else: System.delete_env("ANTHROPIC_API_KEY")
