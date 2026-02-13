@@ -94,6 +94,7 @@ defmodule SpotterWeb.TranscriptComponents do
       data-render-mode={to_string(@line[:render_mode] || "plain")}
       data-tool-name={@line[:tool_name]}
       data-command-status={if @line[:command_status], do: to_string(@line[:command_status])}
+      data-thread-key={@line.thread_key}
     >
       <div class="row-main">
         <%= if @show_debug do %>
@@ -113,6 +114,7 @@ defmodule SpotterWeb.TranscriptComponents do
             agent
           </span>
         <% end %>
+        <span :if={@line[:kind] == :thinking} class="thinking-icon">💡</span>
         <%= if @line[:render_mode] == :code do %>
           <pre class="row-text row-text-code"><span :if={@line[:source_line_number]} class="source-line-number"><%= @line[:source_line_number] %></span><code class={"language-#{@line[:code_language] || "plaintext"}"}><%= @line.line %></code></pre>
         <% else %>
@@ -221,17 +223,22 @@ defmodule SpotterWeb.TranscriptComponents do
     Enum.join(classes, " ")
   end
 
+  @kind_class_map %{
+    tool_result: ["is-tool-result"],
+    thinking: ["is-thinking"],
+    ask_user_question: ["is-ask-user-question"],
+    ask_user_answer: ["is-ask-user-answer"],
+    plan_content: ["is-plan-content"],
+    plan_decision: ["is-plan-decision"],
+    hook_progress: ["is-hook-progress"]
+  }
+
+  defp kind_classes(%{kind: :tool_use} = line) do
+    ["is-tool-use"] ++ bash_status_classes(line)
+  end
+
   defp kind_classes(line) do
-    case line[:kind] do
-      :tool_use -> ["is-tool-use"] ++ bash_status_classes(line)
-      :tool_result -> ["is-tool-result"]
-      :thinking -> ["is-thinking"]
-      :ask_user_question -> ["is-ask-user-question"]
-      :ask_user_answer -> ["is-ask-user-answer"]
-      :plan_content -> ["is-plan-content"]
-      :plan_decision -> ["is-plan-decision"]
-      _ -> []
-    end
+    Map.get(@kind_class_map, line[:kind], [])
   end
 
   defp bash_status_classes(%{tool_name: "Bash", command_status: :success}),
