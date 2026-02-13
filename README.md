@@ -81,6 +81,12 @@ Start the Dolt SQL-server:
 docker compose -f docker-compose.dolt.yml up -d
 ```
 
+Build the spec agent (Node/TypeScript):
+
+```bash
+cd agent && npm ci && npm run build && cd ..
+```
+
 Enable the feature and start Spotter:
 
 ```bash
@@ -89,6 +95,12 @@ mix phx.server
 ```
 
 The schema (domains, features, requirements) is created automatically on startup.
+
+### Running the spec agent manually
+
+```bash
+echo '{"project_id":"...","commit_hash":"...","commit_subject":"...","commit_body":"","diff_stats":{},"patch_files":[],"context_windows":{}}' | scripts/run_spec_agent.sh
+```
 
 ### Configuration
 
