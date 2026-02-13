@@ -17,6 +17,8 @@ config :spotter, Spotter.Repo,
 
 config :ash, policies: [show_policy_breakdowns?: true]
 
+config :claude_agent_sdk, task_supervisor_strict: true
+
 config :spotter, SpotterWeb.Endpoint,
   code_reloader: true,
   check_origin: false,

@@ -1,6 +1,6 @@
 defmodule Spotter.Services.CommitHotspotAgent do
   @moduledoc """
-  Orchestrates commit hotspot analysis using Claude via LangChain.
+  Orchestrates commit hotspot analysis using Claude via `claude_agent_sdk`.
 
   Implements a size-aware strategy:
   - Small diffs: single main run (Opus)
@@ -11,11 +11,9 @@ defmodule Spotter.Services.CommitHotspotAgent do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
-  alias LangChain.Chains.LLMChain
-  alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.Message
-  alias Spotter.Config.Runtime
-  alias Spotter.Services.{CommitHotspotChunker, LlmCredentials}
+  alias Spotter.Services.ClaudeCode.Client
+  alias Spotter.Services.CommitHotspotChunker
+  alias Spotter.Services.LlmCredentials
 
   # Thresholds for choosing strategy
   @default_max_files 200
@@ -25,6 +23,121 @@ defmodule Spotter.Services.CommitHotspotAgent do
   # Models
   @explore_model "claude-haiku-4-5-20251001"
   @main_model "claude-opus-4-6-20250918"
+
+  @explore_prompt """
+  You are a code review triage analyst. Given diff statistics and hunk summaries for a commit,
+  select which file regions are worth deep analysis for code quality hotspots.
+
+  Focus on:
+  - Complex logic changes (not just formatting or imports)
+  - Error-prone patterns
+  - Files with significant additions (not just deletions)
+
+  Skip:
+  - Binary files
+  - Auto-generated files (migrations, lock files, compiled assets)
+  - Test fixtures and sample data
+  - Trivial changes (< 3 meaningful lines)
+  """
+
+  @explore_schema %{
+    "type" => "object",
+    "required" => ["selected"],
+    "properties" => %{
+      "selected" => %{
+        "type" => "array",
+        "items" => %{
+          "type" => "object",
+          "required" => ["relative_path", "ranges", "reason"],
+          "properties" => %{
+            "relative_path" => %{"type" => "string"},
+            "ranges" => %{
+              "type" => "array",
+              "items" => %{
+                "type" => "object",
+                "required" => ["line_start", "line_end"],
+                "properties" => %{
+                  "line_start" => %{"type" => "integer"},
+                  "line_end" => %{"type" => "integer"}
+                }
+              }
+            },
+            "reason" => %{"type" => "string"}
+          }
+        }
+      },
+      "skipped" => %{
+        "type" => "array",
+        "items" => %{"type" => "object"}
+      }
+    }
+  }
+
+  @main_prompt """
+  You are a senior code reviewer analyzing a commit for quality hotspots.
+
+  For each significant code region, identify hotspots worth reviewing. Score each on:
+  - **complexity**: Logic complexity (0-100)
+  - **duplication**: Copy-paste risk (0-100)
+  - **error_handling**: Gaps in error handling (0-100)
+  - **test_coverage**: Likelihood of being untested (0-100)
+  - **change_risk**: Risk of introducing bugs (0-100)
+
+  Provide an **overall_score** (0-100) representing review priority.
+
+  Include:
+  - The enclosing function/symbol name when identifiable
+  - A short snippet (max 5 lines) showing the core of the hotspot
+  - A concise reason explaining why this is a hotspot
+  """
+
+  @main_schema %{
+    "type" => "object",
+    "required" => ["hotspots"],
+    "properties" => %{
+      "hotspots" => %{
+        "type" => "array",
+        "items" => %{
+          "type" => "object",
+          "required" => [
+            "relative_path",
+            "line_start",
+            "line_end",
+            "snippet",
+            "reason",
+            "overall_score",
+            "rubric"
+          ],
+          "properties" => %{
+            "relative_path" => %{"type" => "string"},
+            "symbol_name" => %{"type" => ["string", "null"]},
+            "line_start" => %{"type" => "integer"},
+            "line_end" => %{"type" => "integer"},
+            "snippet" => %{"type" => "string"},
+            "reason" => %{"type" => "string"},
+            "overall_score" => %{"type" => "number"},
+            "rubric" => %{
+              "type" => "object",
+              "required" => [
+                "complexity",
+                "duplication",
+                "error_handling",
+                "test_coverage",
+                "change_risk"
+              ],
+              "properties" => %{
+                "complexity" => %{"type" => "number"},
+                "duplication" => %{"type" => "number"},
+                "error_handling" => %{"type" => "number"},
+                "test_coverage" => %{"type" => "number"},
+                "change_risk" => %{"type" => "number"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   @type diff_context :: %{
           diff_stats: map(),
@@ -53,17 +166,19 @@ defmodule Spotter.Services.CommitHotspotAgent do
   def run(commit_hash, commit_subject, diff_context, opts \\ []) do
     Tracer.with_span "spotter.commit_hotspots.agent.run" do
       Tracer.set_attribute("spotter.commit_hash", commit_hash)
+      Tracer.set_attribute("spotter.model_explore", @explore_model)
+      Tracer.set_attribute("spotter.model_main", @main_model)
 
-      with {:ok, api_key} <- LlmCredentials.anthropic_api_key() do
+      with {:ok, _key} <- LlmCredentials.anthropic_api_key() do
         strategy = choose_strategy(diff_context, opts)
         Tracer.set_attribute("spotter.strategy", Atom.to_string(strategy))
 
         case strategy do
           :single_run ->
-            run_single(commit_hash, commit_subject, diff_context, api_key)
+            run_single(commit_hash, commit_subject, diff_context)
 
           :explore_then_chunked ->
-            run_explore_then_chunked(commit_hash, commit_subject, diff_context, api_key, opts)
+            run_explore_then_chunked(commit_hash, commit_subject, diff_context, opts)
         end
       end
     end
@@ -122,45 +237,63 @@ defmodule Spotter.Services.CommitHotspotAgent do
   end
 
   # Single run: send all context windows to Opus in one call
-  defp run_single(commit_hash, commit_subject, diff_context, api_key) do
+  defp run_single(commit_hash, commit_subject, diff_context) do
     Tracer.with_span "spotter.commit_hotspots.agent.main" do
       regions = build_all_regions(diff_context)
-      {system_prompt, _source} = Runtime.commit_hotspot_main_system_prompt()
       input = format_main_input(commit_hash, commit_subject, regions)
 
-      with {:ok, raw} <- call_llm(@main_model, api_key, system_prompt, input, max_tokens: 4096),
-           {:ok, hotspots} <- parse_main_response(raw) do
-        {:ok,
-         %{
-           hotspots: hotspots,
-           strategy: :single_run,
-           metadata: %{chunk_count: 1, eligible_files: map_size(diff_context.context_windows)}
-         }}
+      case Client.query_json_schema(@main_prompt, input, @main_schema,
+             model: @main_model,
+             timeout_ms: 120_000
+           ) do
+        {:ok, %{output: output, model_used: model_used}} ->
+          Tracer.set_attribute("spotter.model_used_main", model_used || @main_model)
+
+          case validate_main_output(output) do
+            {:ok, hotspots} ->
+              {:ok,
+               %{
+                 hotspots: hotspots,
+                 strategy: :single_run,
+                 metadata: %{
+                   chunk_count: 1,
+                   eligible_files: map_size(diff_context.context_windows)
+                 }
+               }}
+
+            {:error, _} = err ->
+              err
+          end
+
+        {:error, reason} ->
+          Tracer.set_status(:error, inspect(reason))
+          {:error, reason}
       end
     end
   end
 
   # Explore then chunked: Haiku selects regions, Opus analyzes in chunks
-  defp run_explore_then_chunked(commit_hash, commit_subject, diff_context, api_key, opts) do
+  defp run_explore_then_chunked(commit_hash, commit_subject, diff_context, opts) do
     explore_input = format_explore_input(diff_context)
-    {system_prompt, _source} = Runtime.commit_hotspot_explore_system_prompt()
 
     explore_result =
       Tracer.with_span "spotter.commit_hotspots.agent.explore" do
-        call_llm(@explore_model, api_key, system_prompt, explore_input, max_tokens: 2048)
+        case Client.query_json_schema(@explore_prompt, explore_input, @explore_schema,
+               model: @explore_model,
+               timeout_ms: 60_000
+             ) do
+          {:ok, %{output: output, model_used: model_used}} ->
+            Tracer.set_attribute("spotter.model_used_explore", model_used || @explore_model)
+            validate_explore_output(output)
+
+          {:error, reason} ->
+            Tracer.set_status(:error, inspect(reason))
+            {:error, reason}
+        end
       end
 
-    with {:ok, explore_raw} <- explore_result,
-         {:ok, selected} <- parse_explore_response(explore_raw) do
-      run_chunked_main(
-        commit_hash,
-        commit_subject,
-        selected,
-        explore_raw,
-        diff_context,
-        api_key,
-        opts
-      )
+    with {:ok, selected, skipped_count} <- explore_result do
+      run_chunked_main(commit_hash, commit_subject, selected, skipped_count, diff_context, opts)
     end
   end
 
@@ -168,9 +301,8 @@ defmodule Spotter.Services.CommitHotspotAgent do
          commit_hash,
          commit_subject,
          selected,
-         explore_raw,
+         skipped_count,
          diff_context,
-         api_key,
          opts
        ) do
     selected_regions = build_selected_regions(selected, diff_context)
@@ -179,7 +311,7 @@ defmodule Spotter.Services.CommitHotspotAgent do
 
     Tracer.set_attribute("spotter.chunk_count", length(chunks))
 
-    all_hotspots = analyze_chunks(chunks, commit_hash, commit_subject, api_key)
+    all_hotspots = analyze_chunks(chunks, commit_hash, commit_subject)
 
     {:ok,
      %{
@@ -189,26 +321,31 @@ defmodule Spotter.Services.CommitHotspotAgent do
          chunk_count: length(chunks),
          chunk_plan: chunk_plan,
          eligible_files: length(selected),
-         skipped_files: count_skipped(explore_raw)
+         skipped_files: skipped_count
        }
      }}
   end
 
-  defp analyze_chunks(chunks, commit_hash, commit_subject, api_key) do
+  defp analyze_chunks(chunks, commit_hash, commit_subject) do
     Enum.flat_map(chunks, fn chunk_regions ->
       input = format_main_input(commit_hash, commit_subject, chunk_regions)
-      analyze_single_chunk(api_key, input)
+      analyze_single_chunk(input)
     end)
   end
 
-  defp analyze_single_chunk(api_key, input) do
-    {system_prompt, _source} = Runtime.commit_hotspot_main_system_prompt()
+  defp analyze_single_chunk(input) do
+    case Client.query_json_schema(@main_prompt, input, @main_schema,
+           model: @main_model,
+           timeout_ms: 120_000
+         ) do
+      {:ok, %{output: output}} ->
+        case validate_main_output(output) do
+          {:ok, hotspots} -> hotspots
+          {:error, _} -> []
+        end
 
-    with {:ok, raw} <- call_llm(@main_model, api_key, system_prompt, input, max_tokens: 4096),
-         {:ok, hotspots} <- parse_main_response(raw) do
-      hotspots
-    else
-      {:error, _} -> []
+      {:error, _} ->
+        []
     end
   end
 
@@ -295,85 +432,56 @@ defmodule Spotter.Services.CommitHotspotAgent do
     }
   end
 
-  # --- LLM calls ---
+  # --- Response validation ---
 
-  defp call_llm(model, api_key, system_prompt, user_input, opts) do
-    max_tokens = Keyword.get(opts, :max_tokens, 2048)
+  defp validate_explore_output(%{"selected" => selected} = output) when is_list(selected) do
+    skipped_count =
+      case output["skipped"] do
+        list when is_list(list) -> length(list)
+        _ -> 0
+      end
 
-    with {:ok, llm} <- build_llm(model, api_key, max_tokens),
-         {:ok, result_chain} <- run_chain(llm, system_prompt, user_input) do
-      extract_text(result_chain)
-    else
-      {:error, _chain, error} -> {:error, {:chain_error, error}}
-      {:error, _} = err -> err
-    end
+    {:ok, selected, skipped_count}
   end
 
-  defp build_llm(model, api_key, max_tokens) do
-    ChatAnthropic.new(%{
-      model: model,
-      stream: false,
-      max_tokens: max_tokens,
-      temperature: 0.0,
-      api_key: api_key
-    })
+  defp validate_explore_output(_), do: {:error, :invalid_explore_response}
+
+  defp validate_main_output(%{"hotspots" => hotspots}) when is_list(hotspots) do
+    {:ok, Enum.map(hotspots, &normalize_hotspot/1)}
   end
 
-  defp run_chain(llm, system_prompt, user_input) do
-    %{llm: llm}
-    |> LLMChain.new!()
-    |> LLMChain.add_message(Message.new_system!(system_prompt))
-    |> LLMChain.add_message(Message.new_user!(user_input))
-    |> LLMChain.run()
-  end
-
-  defp extract_text(%LLMChain{last_message: %Message{content: text}}) when is_binary(text) do
-    {:ok, text}
-  end
-
-  defp extract_text(%LLMChain{last_message: %Message{content: parts}}) when is_list(parts) do
-    case Enum.find_value(parts, &extract_text_part/1) do
-      nil -> {:error, :no_text_content}
-      text -> {:ok, text}
-    end
-  end
-
-  defp extract_text(_), do: {:error, :unexpected_response}
-
-  defp extract_text_part(%{type: :text, content: text}), do: text
-  defp extract_text_part(_), do: nil
-
-  # --- Response parsing ---
+  defp validate_main_output(_), do: {:error, :invalid_main_response}
 
   @doc false
-  def parse_explore_response(raw) do
+  def parse_explore_response(raw) when is_binary(raw) do
     case parse_json(raw) do
-      {:ok, %{"selected" => selected}} when is_list(selected) -> {:ok, selected}
-      {:ok, _} -> {:error, :invalid_explore_response}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp count_skipped(raw) do
-    case parse_json(raw) do
-      {:ok, %{"skipped" => skipped}} when is_list(skipped) -> length(skipped)
-      _ -> 0
-    end
-  end
-
-  @doc false
-  def parse_main_response(raw) do
-    case parse_json(raw) do
-      {:ok, %{"hotspots" => hotspots}} when is_list(hotspots) ->
-        {:ok, Enum.map(hotspots, &normalize_hotspot/1)}
-
-      {:ok, _} ->
-        {:error, :invalid_main_response}
+      {:ok, map} ->
+        case validate_explore_output(map) do
+          {:ok, selected, _skipped} -> {:ok, selected}
+          {:error, _} = err -> err
+        end
 
       {:error, _} = err ->
         err
     end
   end
+
+  def parse_explore_response(%{} = map) do
+    case validate_explore_output(map) do
+      {:ok, selected, _skipped} -> {:ok, selected}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc false
+  def parse_main_response(raw) when is_binary(raw) do
+    case parse_json(raw) do
+      {:ok, map} -> validate_main_output(map)
+      {:error, _} = err -> err
+    end
+  end
+
+  def parse_main_response(%{} = map), do: validate_main_output(map)
 
   defp normalize_hotspot(h) do
     %{

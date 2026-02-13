@@ -1,18 +1,52 @@
 defmodule Spotter.Services.PromptPatternAgent do
   @moduledoc """
-  Uses Claude via LangChain to detect repeated prompt patterns from collected user prompts.
+  Uses Claude via `claude_agent_sdk` to detect repeated prompt patterns
+  from collected user prompts.
 
-  Read-only agent with no tools — pure text analysis.
+  Read-only agent with no tools — pure text analysis with structured output.
   """
 
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
-  alias LangChain.Chains.LLMChain
-  alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.Message
-  alias Spotter.Config.Runtime
-  alias Spotter.Services.LlmCredentials
+  alias Spotter.Services.ClaudeCode.Client
+
+  @system_prompt """
+  You are a prompt pattern analyst. Given a list of user prompts from Claude Code sessions,
+  identify repeated *substring* patterns ("needles") that appear across multiple prompts.
+
+  Focus on:
+  - Common command patterns (e.g. "fix the bug", "add tests for", "refactor")
+  - Repeated workflow phrases (e.g. "commit these changes", "run the tests")
+  - Domain-specific repeated instructions
+
+  Rules:
+  - Each needle must be plain text (no regex), between 6 and 80 characters
+  - Each label must be non-empty, at most 60 characters
+  - Confidence is a number between 0 and 1
+  - Include up to 5 example prompts that contain the needle
+  - Return at most the requested number of patterns
+  """
+
+  @json_schema %{
+    "type" => "object",
+    "required" => ["patterns"],
+    "properties" => %{
+      "patterns" => %{
+        "type" => "array",
+        "items" => %{
+          "type" => "object",
+          "required" => ["needle", "label", "examples"],
+          "properties" => %{
+            "needle" => %{"type" => "string"},
+            "label" => %{"type" => "string"},
+            "confidence" => %{"type" => ["number", "null"]},
+            "examples" => %{"type" => "array", "items" => %{"type" => "string"}}
+          }
+        }
+      }
+    }
+  }
 
   @doc """
   Analyze prompts for repeated patterns.
@@ -25,16 +59,27 @@ defmodule Spotter.Services.PromptPatternAgent do
     Tracer.with_span "spotter.prompt_pattern_agent.analyze" do
       model = Keyword.get(opts, :model, "claude-haiku-4-5")
       patterns_max = Keyword.get(opts, :patterns_max, 10)
-      {system_prompt, _source} = Runtime.prompt_pattern_system_prompt()
 
       Tracer.set_attribute("spotter.model", model)
       Tracer.set_attribute("spotter.prompts_count", length(prompts))
 
-      with {:ok, api_key} <- LlmCredentials.anthropic_api_key(),
-           {:ok, raw} <-
-             call_llm(model, api_key, system_prompt, build_user_input(prompts, patterns_max)),
-           {:ok, patterns} <- parse_response(raw, patterns_max) do
-        {:ok, %{model_used: model, patterns: patterns}}
+      user_input = build_user_input(prompts, patterns_max)
+
+      case Client.query_json_schema(@system_prompt, user_input, @json_schema,
+             model: model,
+             timeout_ms: 30_000
+           ) do
+        {:ok, %{output: output, model_used: model_used, messages: _messages}} ->
+          case validate_output(output, patterns_max) do
+            {:ok, patterns} ->
+              {:ok, %{model_used: model_used || model, patterns: patterns}}
+
+            {:error, _} = err ->
+              err
+          end
+
+        {:error, _} = err ->
+          err
       end
     end
   end
@@ -42,22 +87,23 @@ defmodule Spotter.Services.PromptPatternAgent do
   @doc false
   def parse_response(raw, patterns_max \\ 10) do
     case parse_json(raw) do
-      {:ok, %{"patterns" => patterns}} when is_list(patterns) ->
-        validated =
-          patterns
-          |> Enum.map(&validate_pattern/1)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.take(patterns_max)
-
-        {:ok, validated}
-
-      {:ok, _} ->
-        {:error, :invalid_response_shape}
-
-      {:error, _} = err ->
-        err
+      {:ok, map} -> validate_output(map, patterns_max)
+      {:error, _} = err -> err
     end
   end
+
+  @doc false
+  def validate_output(%{"patterns" => patterns}, patterns_max) when is_list(patterns) do
+    validated =
+      patterns
+      |> Enum.map(&validate_pattern/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.take(patterns_max)
+
+    {:ok, validated}
+  end
+
+  def validate_output(_, _patterns_max), do: {:error, :invalid_response_shape}
 
   defp build_user_input(prompts, patterns_max) do
     numbered =
@@ -71,50 +117,6 @@ defmodule Spotter.Services.PromptPatternAgent do
     #{numbered}
     """
   end
-
-  defp call_llm(model, api_key, system_prompt, user_input) do
-    with {:ok, llm} <- build_llm(model, api_key),
-         {:ok, result_chain} <- run_chain(llm, system_prompt, user_input) do
-      extract_text(result_chain)
-    else
-      {:error, _chain, error} -> {:error, {:chain_error, error}}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp build_llm(model, api_key) do
-    ChatAnthropic.new(%{
-      model: model,
-      stream: false,
-      max_tokens: 2048,
-      temperature: 0.0,
-      api_key: api_key
-    })
-  end
-
-  defp run_chain(llm, system_prompt, user_input) do
-    %{llm: llm}
-    |> LLMChain.new!()
-    |> LLMChain.add_message(Message.new_system!(system_prompt))
-    |> LLMChain.add_message(Message.new_user!(user_input))
-    |> LLMChain.run()
-  end
-
-  defp extract_text(%LLMChain{last_message: %Message{content: text}}) when is_binary(text) do
-    {:ok, text}
-  end
-
-  defp extract_text(%LLMChain{last_message: %Message{content: parts}}) when is_list(parts) do
-    case Enum.find_value(parts, &extract_text_part/1) do
-      nil -> {:error, :no_text_content}
-      text -> {:ok, text}
-    end
-  end
-
-  defp extract_text(_), do: {:error, :unexpected_response}
-
-  defp extract_text_part(%{type: :text, content: text}), do: text
-  defp extract_text_part(_), do: nil
 
   defp validate_pattern(%{
          "needle" => needle,

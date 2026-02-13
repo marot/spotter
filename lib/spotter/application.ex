@@ -16,6 +16,7 @@ defmodule Spotter.Application do
 
     children =
       [
+        ClaudeAgentSDK.TaskSupervisor,
         {Phoenix.PubSub, name: Spotter.PubSub},
         Spotter.Services.SessionRegistry,
         Spotter.Services.ActiveSessionRegistry,

@@ -31,7 +31,6 @@ defmodule Spotter.MixProject do
       {:oban, "~> 2.0"},
       {:open_api_spex, "~> 3.0"},
       {:usage_rules, "~> 1.0", only: [:dev]},
-      {:ash_ai, "~> 0.5"},
       {:phoenix_live_reload, "~> 1.2", only: [:dev]},
       {:tidewave, "~> 0.5", only: [:dev]},
       {:oban_web, "~> 2.0"},

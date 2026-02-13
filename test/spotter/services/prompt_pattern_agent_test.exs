@@ -153,6 +153,27 @@ defmodule Spotter.Services.PromptPatternAgentTest do
       assert pattern["confidence"] == 1.0
     end
 
+    test "validates a map directly via validate_output/2" do
+      map = %{
+        "patterns" => [
+          %{
+            "needle" => "fix the bug",
+            "label" => "Bug fixes",
+            "confidence" => 0.9,
+            "examples" => ["fix the bug in login"]
+          }
+        ]
+      }
+
+      assert {:ok, [pattern]} = PromptPatternAgent.validate_output(map, 10)
+      assert pattern["needle"] == "fix the bug"
+    end
+
+    test "validate_output/2 rejects invalid shape" do
+      assert {:error, :invalid_response_shape} =
+               PromptPatternAgent.validate_output(%{"results" => []}, 10)
+    end
+
     test "handles null confidence" do
       raw =
         Jason.encode!(%{
