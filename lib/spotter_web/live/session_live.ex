@@ -6,6 +6,7 @@ defmodule SpotterWeb.SessionLive do
   import SpotterWeb.AnnotationComponents
 
   alias Spotter.Services.{
+    ExplainAnnotations,
     ReviewSessionRegistry,
     ReviewUpdates,
     SessionRegistry,
@@ -83,7 +84,8 @@ defmodule SpotterWeb.SessionLive do
         current_message_id: nil,
         show_transcript: true,
         clicked_subagent: nil,
-        active_sidebar_tab: :commits
+        active_sidebar_tab: :commits,
+        explain_streams: %{}
       )
       |> mount_computers(%{
         transcript_view: %{messages: messages, session_cwd: session_cwd}
@@ -171,6 +173,34 @@ defmodule SpotterWeb.SessionLive do
     {:noreply, socket}
   end
 
+  def handle_info({:annotation_explain_delta, id, chunk}, socket) do
+    streams = socket.assigns.explain_streams
+    current = Map.get(streams, id, "")
+    {:noreply, assign(socket, explain_streams: Map.put(streams, id, current <> chunk))}
+  end
+
+  def handle_info({:annotation_explain_done, id, _final, _refs}, socket) do
+    streams = Map.delete(socket.assigns.explain_streams, id)
+
+    {:noreply,
+     socket
+     |> assign(
+       explain_streams: streams,
+       annotations: load_annotations(socket.assigns.session_record)
+     )}
+  end
+
+  def handle_info({:annotation_explain_error, id, _reason}, socket) do
+    streams = Map.delete(socket.assigns.explain_streams, id)
+
+    {:noreply,
+     socket
+     |> assign(
+       explain_streams: streams,
+       annotations: load_annotations(socket.assigns.session_record)
+     )}
+  end
+
   @impl true
   def handle_event("text_selected", params, socket) do
     current_msg_id = socket.assigns.current_message_id
@@ -213,10 +243,12 @@ defmodule SpotterWeb.SessionLive do
      )}
   end
 
-  def handle_event("save_annotation", %{"comment" => comment}, socket) do
+  def handle_event("save_annotation", params, socket) do
+    comment = params["comment"] || ""
+    purpose = if params["purpose"] == "explain", do: :explain, else: :review
     source = socket.assigns.selection_source || :terminal
 
-    params = %{
+    create_params = %{
       session_id: socket.assigns.session_record.id,
       source: source,
       selected_text: socket.assigns.selected_text,
@@ -224,13 +256,16 @@ defmodule SpotterWeb.SessionLive do
       start_col: socket.assigns.selection_start_col,
       end_row: socket.assigns.selection_end_row,
       end_col: socket.assigns.selection_end_col,
-      comment: comment
+      comment: comment,
+      purpose: purpose
     }
 
-    case Ash.create(Annotation, params) do
+    case Ash.create(Annotation, create_params) do
       {:ok, annotation} ->
         create_message_refs(annotation, socket)
-        ReviewUpdates.broadcast_counts()
+        if purpose == :review, do: ReviewUpdates.broadcast_counts()
+
+        socket = maybe_enqueue_explain(socket, annotation, purpose)
 
         {:noreply,
          socket
@@ -509,6 +544,22 @@ defmodule SpotterWeb.SessionLive do
     |> Ash.read!()
   end
 
+  defp maybe_enqueue_explain(socket, annotation, :explain) do
+    ExplainAnnotations.enqueue(annotation.id)
+
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(
+        Spotter.PubSub,
+        ExplainAnnotations.topic(annotation.id)
+      )
+    end
+
+    streams = Map.put(socket.assigns.explain_streams, annotation.id, "")
+    assign(socket, explain_streams: streams)
+  end
+
+  defp maybe_enqueue_explain(socket, _annotation, _purpose), do: socket
+
   defp load_annotations(nil), do: []
 
   defp load_annotations(%Session{id: id}) do
@@ -693,6 +744,7 @@ defmodule SpotterWeb.SessionLive do
 
           <.annotation_cards
             annotations={@annotations}
+            explain_streams={@explain_streams}
             empty_message="Select text in terminal or transcript to add annotations."
           />
         </div>

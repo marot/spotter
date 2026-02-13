@@ -23,7 +23,8 @@ defmodule Spotter.Transcripts.ReviewItem do
         :interval_days,
         :project_id,
         :commit_id,
-        :commit_hotspot_id
+        :commit_hotspot_id,
+        :flashcard_id
       ]
 
       upsert? true
@@ -65,6 +66,8 @@ defmodule Spotter.Transcripts.ReviewItem do
                commit_id = Ash.Changeset.get_attribute(changeset, :commit_id)
                hotspot_id = Ash.Changeset.get_attribute(changeset, :commit_hotspot_id)
 
+               flashcard_id = Ash.Changeset.get_attribute(changeset, :flashcard_id)
+
                case target_kind do
                  :commit_message when is_nil(commit_id) ->
                    {:error,
@@ -80,6 +83,19 @@ defmodule Spotter.Transcripts.ReviewItem do
                     field: :commit_hotspot_id,
                     message: "is required when target_kind is commit_hotspot"}
 
+                 :flashcard when is_nil(flashcard_id) ->
+                   {:error,
+                    field: :flashcard_id, message: "is required when target_kind is flashcard"}
+
+                 :flashcard when not is_nil(commit_id) ->
+                   {:error,
+                    field: :commit_id, message: "must be nil when target_kind is flashcard"}
+
+                 :flashcard when not is_nil(hotspot_id) ->
+                   {:error,
+                    field: :commit_hotspot_id,
+                    message: "must be nil when target_kind is flashcard"}
+
                  _ ->
                    :ok
                end
@@ -92,7 +108,7 @@ defmodule Spotter.Transcripts.ReviewItem do
 
     attribute :target_kind, :atom do
       allow_nil? false
-      constraints one_of: [:commit_message, :commit_hotspot]
+      constraints one_of: [:commit_message, :commit_hotspot, :flashcard]
     end
 
     attribute :importance, :atom do
@@ -128,9 +144,19 @@ defmodule Spotter.Transcripts.ReviewItem do
     belongs_to :commit_hotspot, Spotter.Transcripts.CommitHotspot do
       allow_nil? true
     end
+
+    belongs_to :flashcard, Spotter.Transcripts.Flashcard do
+      allow_nil? true
+    end
   end
 
   identities do
-    identity :unique_review_item, [:project_id, :target_kind, :commit_id, :commit_hotspot_id]
+    identity :unique_review_item, [
+      :project_id,
+      :target_kind,
+      :commit_id,
+      :commit_hotspot_id,
+      :flashcard_id
+    ]
   end
 end

@@ -22,12 +22,13 @@ defmodule Spotter.Services.ReviewCountsTest do
     })
   end
 
-  defp create_annotation(session, state) do
+  defp create_annotation(session, state, opts \\ []) do
     Ash.create!(Annotation, %{
       session_id: session.id,
       selected_text: "test text",
       comment: "test comment",
-      state: state
+      state: state,
+      purpose: Keyword.get(opts, :purpose, :review)
     })
   end
 
@@ -104,6 +105,18 @@ defmodule Spotter.Services.ReviewCountsTest do
 
       assert counts["alpha"] == 1
       assert counts["beta"] == 2
+    end
+
+    test "counts only open review annotations (excludes explain)" do
+      project = create_project("alpha")
+      session = create_session(project)
+      create_annotation(session, :open, purpose: :review)
+      create_annotation(session, :open, purpose: :explain)
+
+      result = ReviewCounts.list_project_open_counts()
+      assert length(result) == 1
+      assert hd(result).open_count == 1
+      assert ReviewCounts.total_open_count() == 1
     end
 
     test "includes projects with zero open annotations alongside non-zero ones" do

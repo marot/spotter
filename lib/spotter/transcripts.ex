@@ -114,6 +114,7 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.CommitFile
     resource Spotter.Transcripts.AnnotationFileRef
     resource Spotter.Transcripts.CommitHotspot
+    resource Spotter.Transcripts.Flashcard
     resource Spotter.Transcripts.ReviewItem
     resource Spotter.Transcripts.ProjectIngestState
     resource Spotter.Transcripts.PromptPatternRun

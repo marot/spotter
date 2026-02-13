@@ -32,13 +32,14 @@ defmodule Spotter.Transcripts.Annotation do
         :metadata,
         :project_id,
         :commit_id,
-        :commit_hotspot_id
+        :commit_hotspot_id,
+        :purpose
       ]
     end
 
     update :update do
       primary? true
-      accept [:comment]
+      accept [:comment, :metadata]
     end
 
     update :close do
@@ -71,6 +72,12 @@ defmodule Spotter.Transcripts.Annotation do
     attribute :end_row, :integer, allow_nil?: true
     attribute :end_col, :integer, allow_nil?: true
     attribute :comment, :string, allow_nil?: false
+
+    attribute :purpose, :atom do
+      allow_nil? false
+      default :review
+      constraints one_of: [:review, :explain]
+    end
 
     attribute :state, :atom do
       allow_nil? false

@@ -21,6 +21,7 @@ defmodule SpotterWeb.AnnotationComponents do
   attr(:selection_label, :string, default: "Selected text")
   attr(:save_event, :string, default: "save_annotation")
   attr(:clear_event, :string, default: "clear_selection")
+  attr(:default_purpose, :string, default: "review")
 
   def annotation_editor(assigns) do
     ~H"""
@@ -28,10 +29,19 @@ defmodule SpotterWeb.AnnotationComponents do
       <div class="annotation-form-hint">{@selection_label}</div>
       <pre class="annotation-form-preview"><%= @selected_text %></pre>
       <form phx-submit={@save_event}>
+        <div class="annotation-purpose-selector">
+          <label class="annotation-purpose-option">
+            <input type="radio" name="purpose" value="review" checked={@default_purpose == "review"} />
+            Note
+          </label>
+          <label class="annotation-purpose-option">
+            <input type="radio" name="purpose" value="explain" checked={@default_purpose == "explain"} />
+            Explain
+          </label>
+        </div>
         <textarea
           name="comment"
-          placeholder="Add a comment..."
-          required
+          placeholder="Add a comment or question (optional)..."
           class="annotation-form-textarea"
         />
         <div class="annotation-form-actions">
@@ -57,6 +67,7 @@ defmodule SpotterWeb.AnnotationComponents do
   attr(:highlight_event, :string, default: "highlight_annotation")
   attr(:delete_event, :string, default: "delete_annotation")
   attr(:empty_message, :string, default: "No annotations yet.")
+  attr(:explain_streams, :map, default: %{})
 
   def annotation_cards(assigns) do
     ~H"""
@@ -70,6 +81,7 @@ defmodule SpotterWeb.AnnotationComponents do
           <span class={"annotation-source-badge annotation-source-#{ann.source}"}>
             {source_badge_text(ann.source)}
           </span>
+          <span :if={ann.purpose == :explain} class="badge badge-explain">Explain</span>
           <span
             :if={ann.source == :transcript && ann.message_refs != []}
             class="text-muted text-xs"
@@ -79,6 +91,44 @@ defmodule SpotterWeb.AnnotationComponents do
         </div>
         <pre class="annotation-text"><%= ann.selected_text %></pre>
         <p class="annotation-comment"><%= ann.comment %></p>
+
+        <%= if ann.purpose == :explain do %>
+          <div class="annotation-explain-answer">
+            <%= cond do %>
+              <% stream = @explain_streams[ann.id] ->
+              %>
+                <div class="annotation-explain-streaming">
+                  <span class="text-muted text-xs">Explaining...</span>
+                  <div class="annotation-explain-text"><%= stream %></div>
+                </div>
+              <% answer = get_in(ann.metadata, ["explain", "answer"]) ->
+              %>
+                <div class="annotation-explain-text"><%= answer %></div>
+              <% get_in(ann.metadata, ["explain", "status"]) == "pending" ->
+              %>
+                <span class="text-muted text-xs">Generating explanation...</span>
+              <% get_in(ann.metadata, ["explain", "status"]) == "error" ->
+              %>
+                <span class="text-error text-xs">
+                  Error: {get_in(ann.metadata, ["explain", "error"])}
+                </span>
+              <% true -> %>
+            <% end %>
+
+            <% refs = get_in(ann.metadata, ["explain", "references"]) %>
+            <%= if is_list(refs) and refs != [] do %>
+              <div class="annotation-explain-refs text-xs text-muted">
+                <span>References:</span>
+                <ul>
+                  <li :for={ref <- refs}>
+                    <a href={ref["url"]} target="_blank" rel="noopener">{ref["url"]}</a>
+                  </li>
+                </ul>
+              </div>
+            <% end %>
+          </div>
+        <% end %>
+
         <div class="annotation-meta">
           <span class="annotation-time"><%= Calendar.strftime(ann.inserted_at, "%H:%M") %></span>
           <button

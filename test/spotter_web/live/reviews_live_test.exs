@@ -27,12 +27,13 @@ defmodule SpotterWeb.ReviewsLiveTest do
     })
   end
 
-  defp create_annotation(session, state) do
+  defp create_annotation(session, state, opts \\ []) do
     Ash.create!(Annotation, %{
       session_id: session.id,
-      selected_text: "text-#{System.unique_integer([:positive])}",
+      selected_text: Keyword.get(opts, :text, "text-#{System.unique_integer([:positive])}"),
       comment: "comment",
-      state: state
+      state: state,
+      purpose: Keyword.get(opts, :purpose, :review)
     })
   end
 
@@ -233,6 +234,44 @@ defmodule SpotterWeb.ReviewsLiveTest do
       {:ok, _view, html} = live(build_conn(), "/reviews?project_id=bogus")
 
       assert html =~ "Reviews"
+    end
+  end
+
+  describe "explain annotations excluded" do
+    test "explain annotations do not appear in project-scoped view" do
+      project = create_project("alpha")
+      session = create_session(project)
+      create_annotation(session, :open, purpose: :explain, text: "explain-only-text")
+      create_annotation(session, :open, purpose: :review, text: "review-only-text")
+
+      {:ok, _view, html} = live(build_conn(), "/reviews?project_id=#{project.id}")
+
+      assert html =~ "review-only-text"
+      refute html =~ "explain-only-text"
+    end
+
+    test "explain annotations are not counted in project chips" do
+      project = create_project("alpha")
+      session = create_session(project)
+      create_annotation(session, :open, purpose: :review)
+      create_annotation(session, :open, purpose: :explain)
+
+      {:ok, _view, html} = live(build_conn(), "/reviews")
+
+      assert html =~ "All (1)"
+      assert html =~ "alpha (1)"
+    end
+
+    test "close_review_session does not close explain annotations" do
+      project = create_project("alpha")
+      session = create_session(project)
+      create_annotation(session, :open, purpose: :review)
+      create_annotation(session, :open, purpose: :explain)
+
+      {:ok, view, _html} = live(build_conn(), "/reviews?project_id=#{project.id}")
+      html = render_click(view, "close_review_session")
+
+      assert html =~ "Closed 1 annotations"
     end
   end
 

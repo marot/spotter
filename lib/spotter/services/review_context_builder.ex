@@ -33,7 +33,7 @@ defmodule Spotter.Services.ReviewContextBuilder do
 
   defp load_open_annotations(session_ids) do
     Annotation
-    |> Ash.Query.filter(session_id in ^session_ids and state == :open)
+    |> Ash.Query.filter(session_id in ^session_ids and state == :open and purpose == :review)
     |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.read!()
     |> Ash.load!([:file_refs, message_refs: :message])

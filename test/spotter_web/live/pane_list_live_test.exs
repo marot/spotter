@@ -73,4 +73,13 @@ defmodule SpotterWeb.PaneListLiveTest do
       assert html =~ "-7"
     end
   end
+
+  describe "study queue" do
+    test "always renders study queue with empty state when no items due", %{} do
+      {:ok, _view, html} = live(build_conn(), "/")
+
+      assert html =~ ~s(data-testid="study-queue")
+      assert html =~ "No items due today."
+    end
+  end
 end

@@ -138,6 +138,31 @@ defmodule Spotter.Services.ReviewContextBuilderTest do
     refute context =~ long_text
   end
 
+  test "excludes explain annotations from injected review context" do
+    {project, session} = create_project_with_session()
+
+    Ash.create!(Annotation, %{
+      session_id: session.id,
+      source: :terminal,
+      selected_text: "explain this code",
+      comment: "explain me",
+      purpose: :explain
+    })
+
+    Ash.create!(Annotation, %{
+      session_id: session.id,
+      source: :terminal,
+      selected_text: "review this code",
+      comment: "review me",
+      purpose: :review
+    })
+
+    {:ok, context} = ReviewContextBuilder.build(project.id)
+
+    assert context =~ "review this code"
+    refute context =~ "explain this code"
+  end
+
   test "returns error for invalid project id" do
     assert {:error, _} = ReviewContextBuilder.build(Ash.UUID.generate())
   end

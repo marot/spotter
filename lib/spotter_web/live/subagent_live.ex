@@ -5,7 +5,7 @@ defmodule SpotterWeb.SubagentLive do
   import SpotterWeb.TranscriptComponents
   import SpotterWeb.AnnotationComponents
 
-  alias Spotter.Services.ReviewUpdates
+  alias Spotter.Services.{ExplainAnnotations, ReviewUpdates}
 
   alias Spotter.Transcripts.{
     Annotation,
@@ -35,6 +35,7 @@ defmodule SpotterWeb.SubagentLive do
             annotations: annotations,
             selected_text: nil,
             selection_message_ids: [],
+            explain_streams: %{},
             not_found: false
           )
           |> mount_computers(%{
@@ -66,19 +67,25 @@ defmodule SpotterWeb.SubagentLive do
     {:noreply, assign(socket, selected_text: nil, selection_message_ids: [])}
   end
 
-  def handle_event("save_annotation", %{"comment" => comment}, socket) do
-    params = %{
+  def handle_event("save_annotation", params, socket) do
+    comment = params["comment"] || ""
+    purpose = if params["purpose"] == "explain", do: :explain, else: :review
+
+    create_params = %{
       session_id: socket.assigns.session_record.id,
       subagent_id: socket.assigns.subagent.id,
       source: :transcript,
       selected_text: socket.assigns.selected_text,
-      comment: comment
+      comment: comment,
+      purpose: purpose
     }
 
-    case Ash.create(Annotation, params) do
+    case Ash.create(Annotation, create_params) do
       {:ok, annotation} ->
         create_message_refs(annotation, socket)
-        ReviewUpdates.broadcast_counts()
+        if purpose == :review, do: ReviewUpdates.broadcast_counts()
+
+        socket = maybe_enqueue_explain(socket, annotation, purpose)
 
         {:noreply,
          socket
@@ -131,6 +138,51 @@ defmodule SpotterWeb.SubagentLive do
   def handle_event("subagent_reference_clicked", _params, socket) do
     {:noreply, socket}
   end
+
+  @impl true
+  def handle_info({:annotation_explain_delta, id, chunk}, socket) do
+    streams = socket.assigns.explain_streams
+    current = Map.get(streams, id, "")
+    {:noreply, assign(socket, explain_streams: Map.put(streams, id, current <> chunk))}
+  end
+
+  def handle_info({:annotation_explain_done, id, _final, _refs}, socket) do
+    streams = Map.delete(socket.assigns.explain_streams, id)
+
+    {:noreply,
+     socket
+     |> assign(
+       explain_streams: streams,
+       annotations: load_annotations(socket.assigns.subagent)
+     )}
+  end
+
+  def handle_info({:annotation_explain_error, id, _reason}, socket) do
+    streams = Map.delete(socket.assigns.explain_streams, id)
+
+    {:noreply,
+     socket
+     |> assign(
+       explain_streams: streams,
+       annotations: load_annotations(socket.assigns.subagent)
+     )}
+  end
+
+  defp maybe_enqueue_explain(socket, annotation, :explain) do
+    ExplainAnnotations.enqueue(annotation.id)
+
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(
+        Spotter.PubSub,
+        ExplainAnnotations.topic(annotation.id)
+      )
+    end
+
+    streams = Map.put(socket.assigns.explain_streams, annotation.id, "")
+    assign(socket, explain_streams: streams)
+  end
+
+  defp maybe_enqueue_explain(socket, _annotation, _purpose), do: socket
 
   defp load_subagent_data(session_id, agent_id) do
     with {:ok, %Session{} = session_record} <-
@@ -237,6 +289,7 @@ defmodule SpotterWeb.SubagentLive do
 
             <.annotation_cards
               annotations={@annotations}
+              explain_streams={@explain_streams}
               empty_message="Select text in the transcript to add annotations."
             />
           </div>

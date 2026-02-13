@@ -67,7 +67,7 @@ defmodule SpotterWeb.ReviewsLive do
         0
       else
         Annotation
-        |> Ash.Query.filter(session_id in ^session_ids and state == :open)
+        |> Ash.Query.filter(session_id in ^session_ids and state == :open and purpose == :review)
         |> Ash.read!()
         |> Enum.reduce(0, fn ann, acc ->
           Ash.update!(ann, %{}, action: :close)
@@ -165,7 +165,7 @@ defmodule SpotterWeb.ReviewsLive do
         []
       else
         Annotation
-        |> Ash.Query.filter(session_id in ^session_ids and state == :open)
+        |> Ash.Query.filter(session_id in ^session_ids and state == :open and purpose == :review)
         |> Ash.Query.sort(inserted_at: :desc)
         |> Ash.read!()
         |> Ash.load!([:subagent, :file_refs, message_refs: :message])

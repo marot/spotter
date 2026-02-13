@@ -17,7 +17,7 @@ defmodule Spotter.Services.ReviewCounts do
 
     open_annotations =
       Annotation
-      |> Ash.Query.filter(state == :open)
+      |> Ash.Query.filter(state == :open and purpose == :review)
       |> Ash.Query.select([:session_id])
       |> Ash.read!()
 
