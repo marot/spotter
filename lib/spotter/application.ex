@@ -3,6 +3,7 @@ defmodule Spotter.Application do
 
   use Application
 
+  alias Spotter.Observability.ObanTelemetry
   alias Spotter.Telemetry.Otel
   alias SpotterWeb.Telemetry.LiveviewOtel
 
@@ -13,6 +14,7 @@ defmodule Spotter.Application do
     # Initialize OpenTelemetry before starting children
     Otel.setup()
     LiveviewOtel.setup()
+    ObanTelemetry.setup()
 
     children =
       [
