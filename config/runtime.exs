@@ -21,18 +21,13 @@ import Config
 config :langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY")
 
 # Product Spec (Dolt) configuration
-product_spec_enabled = System.get_env("SPOTTER_PRODUCT_SPEC_ENABLED") == "true"
-config :spotter, :product_spec_enabled, product_spec_enabled
-
-if product_spec_enabled do
-  config :spotter, Spotter.ProductSpec.Repo,
-    hostname: System.get_env("SPOTTER_DOLT_HOST", "localhost"),
-    port: String.to_integer(System.get_env("SPOTTER_DOLT_PORT", "13306")),
-    database: System.get_env("SPOTTER_DOLT_DATABASE", "spotter_product"),
-    username: System.get_env("SPOTTER_DOLT_USERNAME", "spotter"),
-    password: System.get_env("SPOTTER_DOLT_PASSWORD", "spotter"),
-    pool_size: 5
-end
+config :spotter, Spotter.ProductSpec.Repo,
+  hostname: System.get_env("SPOTTER_DOLT_HOST", "localhost"),
+  port: String.to_integer(System.get_env("SPOTTER_DOLT_PORT", "13306")),
+  database: System.get_env("SPOTTER_DOLT_DATABASE", "spotter_product"),
+  username: System.get_env("SPOTTER_DOLT_USERNAME", "spotter"),
+  password: System.get_env("SPOTTER_DOLT_PASSWORD", "spotter"),
+  pool_size: 5
 
 if config_env() == :prod do
   alias Spotter.Config.EnvParser

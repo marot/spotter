@@ -19,5 +19,5 @@ config :spotter, SpotterWeb.Endpoint,
 
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
-# Product spec disabled by default in tests (no Dolt required)
-config :spotter, :product_spec_enabled, false
+# Dolt repo for product spec - use a test-friendly pool size
+config :spotter, Spotter.ProductSpec.Repo, pool_size: 2

@@ -15,7 +15,7 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpec do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
-  alias Spotter.ProductSpec
+  alias Spotter.ProductSpec.Agent.Runner
   alias Spotter.ProductSpec.DoltVersioning
   alias Spotter.ProductSpec.RollingSpecRun
   alias Spotter.Services.CommitContextBuilder
@@ -36,12 +36,7 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpec do
         Tracer.set_attribute("spotter.parent_trace_id", args["otel_trace_id"])
       end
 
-      if ProductSpec.enabled?() do
-        do_perform(args)
-      else
-        Logger.info("UpdateRollingSpec: product spec disabled, skipping #{commit_hash}")
-        :ok
-      end
+      do_perform(args)
     end
   end
 
@@ -195,56 +190,7 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpec do
     end
   end
 
-  defp invoke_agent(input) do
-    Tracer.with_span "spotter.product_spec.invoke_agent" do
-      json = Jason.encode!(input)
-
-      tmp_path =
-        Path.join(
-          System.tmp_dir!(),
-          "spotter_spec_agent_#{System.unique_integer([:positive])}.json"
-        )
-
-      try do
-        File.write!(tmp_path, json)
-
-        script =
-          Path.join(Application.app_dir(:spotter, "priv"), "../../../scripts/run_spec_agent.sh")
-
-        env = build_agent_env()
-        cmd = "bash #{script} < #{tmp_path}"
-
-        case System.cmd("bash", ["-c", cmd], env: env, stderr_to_stdout: true) do
-          {output, 0} ->
-            case Jason.decode(output) do
-              {:ok, parsed} -> {:ok, parsed}
-              {:error, _} -> {:ok, %{"ok" => true, "raw" => output}}
-            end
-
-          {output, code} ->
-            {:error, "agent exited #{code}: #{String.slice(output, 0, @max_error_chars)}"}
-        end
-      after
-        File.rm(tmp_path)
-      end
-    end
-  end
-
-  defp build_agent_env do
-    base = [
-      {"ANTHROPIC_API_KEY", System.get_env("ANTHROPIC_API_KEY") || ""},
-      {"SPOTTER_DOLT_HOST", System.get_env("SPOTTER_DOLT_HOST") || "localhost"},
-      {"SPOTTER_DOLT_PORT", System.get_env("SPOTTER_DOLT_PORT") || "13306"},
-      {"SPOTTER_DOLT_DATABASE", System.get_env("SPOTTER_DOLT_DATABASE") || "spotter_product"},
-      {"SPOTTER_DOLT_USERNAME", System.get_env("SPOTTER_DOLT_USERNAME") || "spotter"},
-      {"SPOTTER_DOLT_PASSWORD", System.get_env("SPOTTER_DOLT_PASSWORD") || "spotter"}
-    ]
-
-    case SpotterWeb.OtelTraceHelpers.current_trace_id() do
-      nil -> base
-      trace_id -> [{"TRACEPARENT", trace_id} | base]
-    end
-  end
+  defp invoke_agent(input), do: Runner.run(input)
 
   @doc """
   Resolves a git repo path for a project from the most recent session with a cwd.
