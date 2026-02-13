@@ -18,6 +18,7 @@ defmodule SpotterWeb.ConfigLive do
   def handle_event("save_setting", %{"key" => key, "value" => value}, socket) do
     Tracer.with_span "spotter.config_live.save_setting" do
       Tracer.set_attribute("config.key", key)
+      value = String.trim(value)
 
       case upsert_setting(key, value) do
         {:ok, _} ->
@@ -84,6 +85,54 @@ defmodule SpotterWeb.ConfigLive do
         :error ->
           Tracer.set_status(:error, "validation_error")
           {:noreply, put_flash(socket, :error, "Token budget must be a positive integer")}
+      end
+    end
+  end
+
+  def handle_event("save_prompt_patterns_max_prompts_per_run", %{"value" => raw}, socket) do
+    Tracer.with_span "spotter.config_live.save_setting" do
+      Tracer.set_attribute("config.key", "prompt_patterns_max_prompts_per_run")
+
+      case parse_positive_integer(raw) do
+        {:ok, _int} ->
+          case upsert_setting("prompt_patterns_max_prompts_per_run", String.trim(raw)) do
+            {:ok, _} ->
+              {:noreply,
+               socket
+               |> put_flash(:info, "Saved prompt_patterns_max_prompts_per_run")
+               |> load_all()}
+
+            {:error, reason} ->
+              Tracer.set_status(:error, "ash_error")
+              {:noreply, put_flash(socket, :error, "Failed to save: #{inspect(reason)}")}
+          end
+
+        :error ->
+          Tracer.set_status(:error, "validation_error")
+          {:noreply, put_flash(socket, :error, "Max prompts per run must be a positive integer")}
+      end
+    end
+  end
+
+  def handle_event("save_prompt_patterns_max_prompt_chars", %{"value" => raw}, socket) do
+    Tracer.with_span "spotter.config_live.save_setting" do
+      Tracer.set_attribute("config.key", "prompt_patterns_max_prompt_chars")
+
+      case parse_positive_integer(raw) do
+        {:ok, _int} ->
+          case upsert_setting("prompt_patterns_max_prompt_chars", String.trim(raw)) do
+            {:ok, _} ->
+              {:noreply,
+               socket |> put_flash(:info, "Saved prompt_patterns_max_prompt_chars") |> load_all()}
+
+            {:error, reason} ->
+              Tracer.set_status(:error, "ash_error")
+              {:noreply, put_flash(socket, :error, "Failed to save: #{inspect(reason)}")}
+          end
+
+        :error ->
+          Tracer.set_status(:error, "validation_error")
+          {:noreply, put_flash(socket, :error, "Max prompt chars must be a positive integer")}
       end
     end
   end
@@ -185,6 +234,36 @@ defmodule SpotterWeb.ConfigLive do
     {transcripts_dir, transcripts_dir_source} = Runtime.transcripts_dir()
     {summary_model, summary_model_source} = Runtime.summary_model()
     {summary_budget, summary_budget_source} = Runtime.summary_token_budget()
+
+    {prompt_patterns_max_prompts_per_run, prompt_patterns_max_prompts_per_run_source} =
+      Runtime.prompt_patterns_max_prompts_per_run()
+
+    {prompt_patterns_max_prompt_chars, prompt_patterns_max_prompt_chars_source} =
+      Runtime.prompt_patterns_max_prompt_chars()
+
+    {prompt_patterns_model, prompt_patterns_model_source} = Runtime.prompt_patterns_model()
+
+    {prompt_pattern_system_prompt, prompt_pattern_system_prompt_source} =
+      Runtime.prompt_pattern_system_prompt()
+
+    {session_distiller_system_prompt, session_distiller_system_prompt_source} =
+      Runtime.session_distiller_system_prompt()
+
+    {product_spec_system_prompt, product_spec_system_prompt_source} =
+      Runtime.product_spec_system_prompt()
+
+    {project_rollup_system_prompt, project_rollup_system_prompt_source} =
+      Runtime.project_rollup_system_prompt()
+
+    {waiting_summary_system_prompt, waiting_summary_system_prompt_source} =
+      Runtime.waiting_summary_system_prompt()
+
+    {commit_hotspot_explore_system_prompt, commit_hotspot_explore_system_prompt_source} =
+      Runtime.commit_hotspot_explore_system_prompt()
+
+    {commit_hotspot_main_system_prompt, commit_hotspot_main_system_prompt_source} =
+      Runtime.commit_hotspot_main_system_prompt()
+
     api_key_present = Runtime.anthropic_key_present?()
     projects = Ash.read!(Project)
 
@@ -200,6 +279,26 @@ defmodule SpotterWeb.ConfigLive do
       summary_model_source: summary_model_source,
       summary_budget: summary_budget,
       summary_budget_source: summary_budget_source,
+      prompt_patterns_max_prompts_per_run: prompt_patterns_max_prompts_per_run,
+      prompt_patterns_max_prompts_per_run_source: prompt_patterns_max_prompts_per_run_source,
+      prompt_patterns_max_prompt_chars: prompt_patterns_max_prompt_chars,
+      prompt_patterns_max_prompt_chars_source: prompt_patterns_max_prompt_chars_source,
+      prompt_patterns_model: prompt_patterns_model,
+      prompt_patterns_model_source: prompt_patterns_model_source,
+      prompt_pattern_system_prompt: prompt_pattern_system_prompt,
+      prompt_pattern_system_prompt_source: prompt_pattern_system_prompt_source,
+      product_spec_system_prompt: product_spec_system_prompt,
+      product_spec_system_prompt_source: product_spec_system_prompt_source,
+      session_distiller_system_prompt: session_distiller_system_prompt,
+      session_distiller_system_prompt_source: session_distiller_system_prompt_source,
+      project_rollup_system_prompt: project_rollup_system_prompt,
+      project_rollup_system_prompt_source: project_rollup_system_prompt_source,
+      waiting_summary_system_prompt: waiting_summary_system_prompt,
+      waiting_summary_system_prompt_source: waiting_summary_system_prompt_source,
+      commit_hotspot_explore_system_prompt: commit_hotspot_explore_system_prompt,
+      commit_hotspot_explore_system_prompt_source: commit_hotspot_explore_system_prompt_source,
+      commit_hotspot_main_system_prompt: commit_hotspot_main_system_prompt,
+      commit_hotspot_main_system_prompt_source: commit_hotspot_main_system_prompt_source,
       api_key_present: api_key_present,
       projects: projects,
       otel_enabled: otel_enabled,
@@ -334,6 +433,150 @@ defmodule SpotterWeb.ConfigLive do
         </div>
       </section>
 
+      <%!-- Prompt Patterns Section --%>
+      <section class="config-section">
+        <h2>Prompt Patterns</h2>
+
+        <div class="config-row">
+          <div class="config-label-group">
+            <label class="config-label">prompt_patterns_model</label>
+            <span class="config-source">{source_label(@prompt_patterns_model_source)}</span>
+          </div>
+          <form phx-submit="save_setting" class="config-inline-form">
+            <input type="hidden" name="key" value="prompt_patterns_model" />
+            <input type="text" name="value" value={@prompt_patterns_model} class="config-input" />
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </div>
+
+        <div class="config-row">
+          <div class="config-label-group">
+            <label class="config-label">prompt_patterns_max_prompts_per_run</label>
+            <span class="config-source">{source_label(@prompt_patterns_max_prompts_per_run_source)}</span>
+          </div>
+          <form phx-submit="save_prompt_patterns_max_prompts_per_run" class="config-inline-form">
+            <input
+              type="number"
+              name="value"
+              value={@prompt_patterns_max_prompts_per_run}
+              min="1"
+              class="config-input"
+            />
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </div>
+
+        <div class="config-row">
+          <div class="config-label-group">
+            <label class="config-label">prompt_patterns_max_prompt_chars</label>
+            <span class="config-source">{source_label(@prompt_patterns_max_prompt_chars_source)}</span>
+          </div>
+          <form phx-submit="save_prompt_patterns_max_prompt_chars" class="config-inline-form">
+            <input
+              type="number"
+              name="value"
+              value={@prompt_patterns_max_prompt_chars}
+              min="1"
+              class="config-input"
+            />
+            <button type="submit" class="btn btn-sm">Save</button>
+          </form>
+        </div>
+      </section>
+
+      <%!-- Agent System Prompts Section --%>
+      <section class="config-section">
+        <h2>Agent System Prompts</h2>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">prompt_pattern_system_prompt</label>
+              <span class="config-source">{source_label(@prompt_pattern_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="prompt_pattern_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="10">{@prompt_pattern_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">product_spec_system_prompt</label>
+              <span class="config-source">{source_label(@product_spec_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="product_spec_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="12">{@product_spec_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">session_distiller_system_prompt</label>
+              <span class="config-source">{source_label(@session_distiller_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="session_distiller_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="12">{@session_distiller_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">project_rollup_system_prompt</label>
+              <span class="config-source">{source_label(@project_rollup_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="project_rollup_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="10">{@project_rollup_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">waiting_summary_system_prompt</label>
+              <span class="config-source">{source_label(@waiting_summary_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="waiting_summary_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="8">{@waiting_summary_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">commit_hotspot_explore_system_prompt</label>
+              <span class="config-source">{source_label(@commit_hotspot_explore_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="commit_hotspot_explore_system_prompt" />
+              <textarea
+                name="value"
+                class="config-textarea"
+                rows="12"
+              >{@commit_hotspot_explore_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+
+          <div class="config-row">
+            <div class="config-label-group">
+              <label class="config-label">commit_hotspot_main_system_prompt</label>
+              <span class="config-source">{source_label(@commit_hotspot_main_system_prompt_source)}</span>
+            </div>
+            <form phx-submit="save_setting" class="config-inline-form config-inline-form--textarea">
+              <input type="hidden" name="key" value="commit_hotspot_main_system_prompt" />
+              <textarea name="value" class="config-textarea" rows="14">{@commit_hotspot_main_system_prompt}</textarea>
+              <button type="submit" class="btn btn-sm">Save</button>
+            </form>
+          </div>
+      </section>
+
       <%!-- OpenTelemetry Section --%>
       <section class="config-section">
         <h2>OpenTelemetry</h2>
@@ -424,6 +667,10 @@ defmodule SpotterWeb.ConfigLive do
         gap: 0.5rem;
         flex: 1;
       }
+      .config-inline-form--textarea {
+        align-items: flex-start;
+        flex-direction: column;
+      }
       .config-input {
         font-family: monospace;
         font-size: 0.85rem;
@@ -482,6 +729,23 @@ defmodule SpotterWeb.ConfigLive do
       }
       .btn-danger:hover {
         background: #b91c1c;
+      }
+
+      .config-textarea {
+        width: 100%;
+        min-height: 6rem;
+        font-family: monospace;
+        font-size: 0.75rem;
+        padding: 0.35rem 0.5rem;
+        background: #0d1117;
+        border: 1px solid #333;
+        border-radius: 4px;
+        color: #e5e7eb;
+        white-space: pre-wrap;
+      }
+      .config-textarea:focus {
+        outline: none;
+        border-color: #93c5fd;
       }
     </style>
     """

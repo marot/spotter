@@ -1,9 +1,34 @@
 defmodule Spotter.ProductSpec.Agent.Prompt do
   @moduledoc false
 
+  @default_system_prompt """
+  You are a product specification analyst. Your job is to maintain a structured product specification based on code changes.
+
+  %{prompt_body}
+  """
+
   @doc "Builds the system prompt for the spec agent given commit input."
-  @spec build_system_prompt(map()) :: String.t()
-  def build_system_prompt(input) do
+  @spec build_system_prompt(map(), String.t() | nil) :: String.t()
+  def build_system_prompt(input, custom_template \\ nil) do
+    template = validate_template(custom_template)
+    render_prompt(input, template)
+  end
+
+  defp render_prompt(input, template) do
+    prompt_body = build_prompt_body(input)
+
+    if String.contains?(template, "%{prompt_body}") do
+      String.replace(template, "%{prompt_body}", prompt_body)
+    else
+      template <> "\n\n" <> prompt_body
+    end
+  end
+
+  defp validate_template(nil), do: @default_system_prompt
+  defp validate_template(template) when is_binary(template) and template != "", do: template
+  defp validate_template(_), do: @default_system_prompt
+
+  defp build_prompt_body(input) do
     """
     You are a product specification analyst. Your job is to maintain a structured product specification based on code changes.
 

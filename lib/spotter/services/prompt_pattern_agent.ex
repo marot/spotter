@@ -11,27 +11,8 @@ defmodule Spotter.Services.PromptPatternAgent do
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
+  alias Spotter.Config.Runtime
   alias Spotter.Services.LlmCredentials
-
-  @system_prompt """
-  You are a prompt pattern analyst. Given a list of user prompts from Claude Code sessions,
-  identify repeated *substring* patterns ("needles") that appear across multiple prompts.
-
-  Focus on:
-  - Common command patterns (e.g. "fix the bug", "add tests for", "refactor")
-  - Repeated workflow phrases (e.g. "commit these changes", "run the tests")
-  - Domain-specific repeated instructions
-
-  Rules:
-  - Each needle must be plain text (no regex), between 6 and 80 characters
-  - Each label must be non-empty, at most 60 characters
-  - Confidence is a number between 0 and 1
-  - Include up to 5 example prompts that contain the needle
-  - Return at most the requested number of patterns
-
-  Respond ONLY with valid JSON, no markdown fences:
-  {"patterns":[{"needle":"...","label":"...","confidence":0.85,"examples":["..."]}]}
-  """
 
   @doc """
   Analyze prompts for repeated patterns.
@@ -44,12 +25,14 @@ defmodule Spotter.Services.PromptPatternAgent do
     Tracer.with_span "spotter.prompt_pattern_agent.analyze" do
       model = Keyword.get(opts, :model, "claude-haiku-4-5")
       patterns_max = Keyword.get(opts, :patterns_max, 10)
+      {system_prompt, _source} = Runtime.prompt_pattern_system_prompt()
 
       Tracer.set_attribute("spotter.model", model)
       Tracer.set_attribute("spotter.prompts_count", length(prompts))
 
       with {:ok, api_key} <- LlmCredentials.anthropic_api_key(),
-           {:ok, raw} <- call_llm(model, api_key, build_user_input(prompts, patterns_max)),
+           {:ok, raw} <-
+             call_llm(model, api_key, system_prompt, build_user_input(prompts, patterns_max)),
            {:ok, patterns} <- parse_response(raw, patterns_max) do
         {:ok, %{model_used: model, patterns: patterns}}
       end
@@ -89,9 +72,9 @@ defmodule Spotter.Services.PromptPatternAgent do
     """
   end
 
-  defp call_llm(model, api_key, user_input) do
+  defp call_llm(model, api_key, system_prompt, user_input) do
     with {:ok, llm} <- build_llm(model, api_key),
-         {:ok, result_chain} <- run_chain(llm, user_input) do
+         {:ok, result_chain} <- run_chain(llm, system_prompt, user_input) do
       extract_text(result_chain)
     else
       {:error, _chain, error} -> {:error, {:chain_error, error}}
@@ -109,10 +92,10 @@ defmodule Spotter.Services.PromptPatternAgent do
     })
   end
 
-  defp run_chain(llm, user_input) do
+  defp run_chain(llm, system_prompt, user_input) do
     %{llm: llm}
     |> LLMChain.new!()
-    |> LLMChain.add_message(Message.new_system!(@system_prompt))
+    |> LLMChain.add_message(Message.new_system!(system_prompt))
     |> LLMChain.add_message(Message.new_user!(user_input))
     |> LLMChain.run()
   end

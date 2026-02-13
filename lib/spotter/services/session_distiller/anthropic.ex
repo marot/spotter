@@ -5,30 +5,13 @@ defmodule Spotter.Services.SessionDistiller.Anthropic do
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
+  alias Spotter.Config.Runtime
   alias Spotter.Services.LlmCredentials
 
   require Logger
-
   @default_model "claude-3-5-haiku-latest"
   @default_timeout 15_000
   @max_tokens 400
-
-  @system_prompt """
-  You are summarizing a completed Claude Code session for a developer activity log.
-  Given session metadata, linked commits, and a transcript slice, produce a JSON summary.
-
-  Respond ONLY with valid JSON, no markdown fences:
-  {
-    "session_summary": "1-2 sentence overview of what was accomplished",
-    "what_changed": ["concise bullet items of changes made"],
-    "key_files": [{"path": "relative/path", "reason": "why this file matters"}],
-    "commands_run": ["notable commands executed"],
-    "open_threads": ["unfinished work or follow-ups"],
-    "risks": ["potential issues or concerns"]
-  }
-
-  Keep each field concise. Omit empty arrays. Focus on committed work.
-  """
 
   @impl true
   def distill(pack, opts \\ []) do
@@ -43,6 +26,7 @@ defmodule Spotter.Services.SessionDistiller.Anthropic do
 
   defp call_llm(pack, model, api_key, timeout) do
     input_text = format_pack(pack)
+    {system_prompt, _source} = Runtime.session_distiller_system_prompt()
 
     try do
       {:ok, llm} =
@@ -56,7 +40,7 @@ defmodule Spotter.Services.SessionDistiller.Anthropic do
       {:ok, chain} = LLMChain.new(%{llm: llm})
 
       chain
-      |> LLMChain.add_message(Message.new_system!(@system_prompt))
+      |> LLMChain.add_message(Message.new_system!(system_prompt))
       |> LLMChain.add_message(Message.new_user!(input_text))
       |> LLMChain.run(timeout: timeout)
       |> handle_response(model)

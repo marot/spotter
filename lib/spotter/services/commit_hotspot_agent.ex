@@ -14,6 +14,7 @@ defmodule Spotter.Services.CommitHotspotAgent do
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
+  alias Spotter.Config.Runtime
   alias Spotter.Services.{CommitHotspotChunker, LlmCredentials}
 
   # Thresholds for choosing strategy
@@ -24,46 +25,6 @@ defmodule Spotter.Services.CommitHotspotAgent do
   # Models
   @explore_model "claude-haiku-4-5-20251001"
   @main_model "claude-opus-4-6-20250918"
-
-  @explore_prompt """
-  You are a code review triage analyst. Given diff statistics and hunk summaries for a commit,
-  select which file regions are worth deep analysis for code quality hotspots.
-
-  Focus on:
-  - Complex logic changes (not just formatting or imports)
-  - Error-prone patterns
-  - Files with significant additions (not just deletions)
-
-  Skip:
-  - Binary files
-  - Auto-generated files (migrations, lock files, compiled assets)
-  - Test fixtures and sample data
-  - Trivial changes (< 3 meaningful lines)
-
-  Respond ONLY with valid JSON, no markdown fences:
-  {"selected":[{"relative_path":"...","ranges":[{"line_start":1,"line_end":20}],"reason":"..."}],"skipped":[{"relative_path":"...","reason":"..."}]}
-  """
-
-  @main_prompt """
-  You are a senior code reviewer analyzing a commit for quality hotspots.
-
-  For each significant code region, identify hotspots worth reviewing. Score each on:
-  - **complexity**: Logic complexity (0-100)
-  - **duplication**: Copy-paste risk (0-100)
-  - **error_handling**: Gaps in error handling (0-100)
-  - **test_coverage**: Likelihood of being untested (0-100)
-  - **change_risk**: Risk of introducing bugs (0-100)
-
-  Provide an **overall_score** (0-100) representing review priority.
-
-  Include:
-  - The enclosing function/symbol name when identifiable
-  - A short snippet (max 5 lines) showing the core of the hotspot
-  - A concise reason explaining why this is a hotspot
-
-  Respond ONLY with valid JSON, no markdown fences:
-  {"hotspots":[{"relative_path":"...","symbol_name":"...","line_start":1,"line_end":20,"snippet":"...","reason":"...","overall_score":78.5,"rubric":{"complexity":80,"duplication":30,"error_handling":70,"test_coverage":60,"change_risk":85}}]}
-  """
 
   @type diff_context :: %{
           diff_stats: map(),
@@ -164,9 +125,10 @@ defmodule Spotter.Services.CommitHotspotAgent do
   defp run_single(commit_hash, commit_subject, diff_context, api_key) do
     Tracer.with_span "spotter.commit_hotspots.agent.main" do
       regions = build_all_regions(diff_context)
+      {system_prompt, _source} = Runtime.commit_hotspot_main_system_prompt()
       input = format_main_input(commit_hash, commit_subject, regions)
 
-      with {:ok, raw} <- call_llm(@main_model, api_key, @main_prompt, input, max_tokens: 4096),
+      with {:ok, raw} <- call_llm(@main_model, api_key, system_prompt, input, max_tokens: 4096),
            {:ok, hotspots} <- parse_main_response(raw) do
         {:ok,
          %{
@@ -181,10 +143,11 @@ defmodule Spotter.Services.CommitHotspotAgent do
   # Explore then chunked: Haiku selects regions, Opus analyzes in chunks
   defp run_explore_then_chunked(commit_hash, commit_subject, diff_context, api_key, opts) do
     explore_input = format_explore_input(diff_context)
+    {system_prompt, _source} = Runtime.commit_hotspot_explore_system_prompt()
 
     explore_result =
       Tracer.with_span "spotter.commit_hotspots.agent.explore" do
-        call_llm(@explore_model, api_key, @explore_prompt, explore_input, max_tokens: 2048)
+        call_llm(@explore_model, api_key, system_prompt, explore_input, max_tokens: 2048)
       end
 
     with {:ok, explore_raw} <- explore_result,
@@ -239,7 +202,9 @@ defmodule Spotter.Services.CommitHotspotAgent do
   end
 
   defp analyze_single_chunk(api_key, input) do
-    with {:ok, raw} <- call_llm(@main_model, api_key, @main_prompt, input, max_tokens: 4096),
+    {system_prompt, _source} = Runtime.commit_hotspot_main_system_prompt()
+
+    with {:ok, raw} <- call_llm(@main_model, api_key, system_prompt, input, max_tokens: 4096),
          {:ok, hotspots} <- parse_main_response(raw) do
       hotspots
     else

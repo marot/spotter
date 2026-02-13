@@ -92,15 +92,7 @@ defmodule Spotter.Services.WaitingSummary do
     input_text =
       Enum.map_join(messages, "\n", &SliceBuilder.message_text/1)
 
-    system_prompt = """
-    You are summarizing a Claude Code session for a tmux overlay notification.
-    The developer has been away and Claude is waiting for input.
-    Produce a concise summary (max 6 lines, ~60 chars per line) covering:
-    - What was accomplished
-    - What Claude is currently waiting for
-    - Any errors or issues encountered
-    Keep it actionable and scannable. No markdown formatting.
-    """
+    {system_prompt, _source} = Runtime.waiting_summary_system_prompt()
 
     try do
       {:ok, llm} =

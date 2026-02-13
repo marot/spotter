@@ -10,6 +10,7 @@ defmodule Spotter.ProductSpec.Agent.Runner do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Spotter.Config.Runtime
   alias Spotter.ProductSpec.Agent.Prompt
   alias Spotter.ProductSpec.Agent.ToolHelpers
   alias Spotter.ProductSpec.Agent.Tools
@@ -43,7 +44,8 @@ defmodule Spotter.ProductSpec.Agent.Runner do
         )
 
       allowed_tools = Enum.map(@tool_names, &"mcp__spec-tools__#{&1}")
-      system_prompt = Prompt.build_system_prompt(input)
+      {system_prompt_template, _source} = Runtime.product_spec_system_prompt()
+      system_prompt = Prompt.build_system_prompt(input, system_prompt_template)
 
       opts = %ClaudeAgentSDK.Options{
         mcp_servers: %{"spec-tools" => server},
