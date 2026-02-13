@@ -53,7 +53,8 @@ defmodule Spotter.MixProject do
       {:opentelemetry_exporter, "~> 1.10"},
       {:opentelemetry_bandit, "~> 0.3"},
       {:opentelemetry_phoenix, "~> 2.0"},
-      {:opentelemetry_ash, "~> 0.1"}
+      {:opentelemetry_ash, "~> 0.1"},
+      {:myxql, "~> 0.8"}
     ]
   end
 

@@ -18,3 +18,6 @@ config :spotter, SpotterWeb.Endpoint,
   server: false
 
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
+
+# Product spec disabled by default in tests (no Dolt required)
+config :spotter, :product_spec_enabled, false
