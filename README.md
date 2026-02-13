@@ -69,6 +69,26 @@ LLM-powered features (hotspot scoring, waiting summary) use the Anthropic API vi
 - **Resolution order**: app config first, then system env fallback
 - **Fail-safe**: when the key is missing or blank, LLM features degrade gracefully (deterministic fallback summaries, scoring skipped) without crashing workers or making outbound API calls
 
+## Claude Agent SDK (Claude Code CLI)
+
+Several features use [claude_agent_sdk](https://hexdocs.pm/claude_agent_sdk) to run Claude-powered agents in-process via the Claude Code CLI:
+
+- **Product spec rolling spec** (epic `spotter-aml`)
+- **Commit test extraction** (epic `spotter-z3e`)
+
+### Prerequisites
+
+Install the Claude Code CLI globally:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude --version
+```
+
+The SDK authenticates via `ANTHROPIC_API_KEY` (environment variable) or CLI auth (`claude auth`).
+
+In test mode, the SDK uses a mock server (`ClaudeAgentSDK.Mock`) so the CLI binary is not required for `mix test`.
+
 ## Product Specification (Dolt)
 
 Spotter can maintain a rolling, versioned product specification derived from codebase changes. The spec is stored in a Dolt SQL-server (MySQL-compatible with Git-style versioning).

@@ -122,6 +122,8 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.SessionDistillation
     resource Spotter.Transcripts.ProjectPeriodSummary
     resource Spotter.Transcripts.ProjectRollingSummary
+    resource Spotter.Transcripts.TestCase
+    resource Spotter.Transcripts.CommitTestRun
     resource Spotter.ProductSpec.RollingSpecRun
   end
 end

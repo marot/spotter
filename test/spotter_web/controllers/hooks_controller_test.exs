@@ -346,6 +346,14 @@ defmodule SpotterWeb.HooksControllerTest do
                    where: j.worker == "Spotter.Transcripts.Jobs.AnalyzeCommitHotspots"
                  )
                )
+
+      # Verify AnalyzeCommitTests job was enqueued
+      assert [_job] =
+               Spotter.Repo.all(
+                 from(j in Oban.Job,
+                   where: j.worker == "Spotter.Transcripts.Jobs.AnalyzeCommitTests"
+                 )
+               )
     end
 
     test "handles empty hashes array", %{session: session} do
