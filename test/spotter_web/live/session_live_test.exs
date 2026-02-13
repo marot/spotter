@@ -347,6 +347,33 @@ defmodule SpotterWeb.SessionLiveTest do
     end
   end
 
+  describe "hook_progress rendering" do
+    test "renders hook_progress row with is-hook-progress class", %{
+      session: session,
+      session_id: session_id
+    } do
+      create_message(session, %{
+        type: :progress,
+        role: :system,
+        content: nil,
+        raw_payload: %{
+          "parentToolUseID" => "toolu_parent",
+          "data" => %{
+            "type" => "hook_progress",
+            "hookEvent" => "PostToolUse",
+            "hookName" => "lint-check",
+            "command" => "mix credo"
+          }
+        }
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ "is-hook-progress"
+      assert html =~ "hook PostToolUse lint-check: mix credo"
+    end
+  end
+
   describe "empty state" do
     test "renders empty state when no messages", %{session_id: session_id} do
       {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")

@@ -1147,12 +1147,35 @@ input::placeholder, textarea::placeholder {
   color: var(--text-secondary);
 }
 
-/* Kind: code */
+/* Kind: code – consecutive code rows form a continuous block */
+.transcript-row.is-code {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .transcript-row.is-code .row-text {
   font-family: var(--font-mono);
   background: var(--surface-3);
   border-radius: 2px;
   padding: 0 4px;
+}
+
+.transcript-row pre.row-text {
+  margin: 0;
+}
+
+/* Kind: thinking – bulb icon */
+.thinking-icon {
+  flex-shrink: 0;
+}
+
+/* Kind: hook_progress */
+.transcript-row.is-hook-progress {
+  opacity: 0.85;
+}
+
+.transcript-row.is-hook-progress .row-text {
+  color: var(--text-tertiary);
 }
 
 .source-line-number {

@@ -2395,6 +2395,98 @@ defmodule Spotter.Services.TranscriptRendererTest do
     end
   end
 
+  describe "hook_progress rendering" do
+    test "hook_progress uses parentToolUseID for tool_use_id and thread_key" do
+      messages = [
+        %{
+          type: :progress,
+          uuid: "msg-1",
+          content: nil,
+          raw_payload: %{
+            "parentToolUseID" => "toolu_parent",
+            "toolUseID" => "toolu_child",
+            "data" => %{
+              "type" => "hook_progress",
+              "hookEvent" => "PostToolUse",
+              "hookName" => "lint-check",
+              "command" => "mix credo"
+            }
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert [hook_line] = result
+
+      assert hook_line.kind == :hook_progress
+      assert hook_line.tool_use_id == "toolu_parent"
+      assert hook_line.thread_key == "toolu_parent"
+      assert hook_line.line == "hook PostToolUse lint-check: mix credo"
+    end
+
+    test "hook_progress falls back to toolUseID when parentToolUseID is missing" do
+      messages = [
+        %{
+          type: :progress,
+          uuid: "msg-1",
+          content: nil,
+          raw_payload: %{
+            "toolUseID" => "toolu_only",
+            "data" => %{
+              "type" => "hook_progress",
+              "hookEvent" => "PreToolUse",
+              "hookName" => "format",
+              "command" => "mix format"
+            }
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert [hook_line] = result
+
+      assert hook_line.tool_use_id == "toolu_only"
+      assert hook_line.thread_key == "toolu_only"
+    end
+
+    test "hook_progress with no tool IDs uses unthreaded fallback" do
+      messages = [
+        %{
+          type: :progress,
+          uuid: "msg-1",
+          content: nil,
+          raw_payload: %{
+            "data" => %{
+              "type" => "hook_progress",
+              "hookEvent" => "SessionStart",
+              "hookName" => "startup",
+              "command" => "echo hello"
+            }
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      assert [hook_line] = result
+
+      assert hook_line.tool_use_id == nil
+      assert hook_line.thread_key == "hook-unthreaded"
+    end
+
+    test "non-hook progress messages are still skipped" do
+      messages = [
+        %{
+          type: :progress,
+          uuid: "msg-1",
+          content: nil,
+          raw_payload: %{"data" => %{"type" => "something_else"}}
+        }
+      ]
+
+      assert TranscriptRenderer.render(messages) == []
+    end
+  end
+
   describe "⎿ removal and boilerplate suppression" do
     test "no rendered line contains the ⎿ character" do
       messages = [

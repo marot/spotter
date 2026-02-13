@@ -300,8 +300,12 @@ defmodule Spotter.Services.TranscriptRenderer do
 
   # ── Enriched rendering (used by render/2) ──────────────────────────
 
+  defp render_message_enriched(%{type: :progress} = msg, _session_cwd, _tui, _toi) do
+    render_hook_progress(msg)
+  end
+
   defp render_message_enriched(%{type: type}, _session_cwd, _tool_use_index, _tool_outcome_index)
-       when type in [:progress, :system, :file_history_snapshot] do
+       when type in [:system, :file_history_snapshot] do
     []
   end
 
@@ -600,6 +604,42 @@ defmodule Spotter.Services.TranscriptRenderer do
       _ -> nil
     end
   end
+
+  # ── Hook progress rendering ────────────────────────────────────────
+
+  @hook_command_max_length 120
+
+  defp render_hook_progress(
+         %{raw_payload: %{"data" => %{"type" => "hook_progress"} = data}} = msg
+       ) do
+    parent_tool_use_id =
+      non_empty_string(msg.raw_payload["parentToolUseID"]) ||
+        non_empty_string(msg.raw_payload["toolUseID"])
+
+    thread_key = parent_tool_use_id || "hook-unthreaded"
+
+    hook_event = data["hookEvent"] || "unknown"
+    hook_name = data["hookName"] || "unknown"
+    command = data["command"] || ""
+    truncated_command = truncate_preview(command, @hook_command_max_length)
+
+    [
+      %{
+        line: "hook #{hook_event} #{hook_name}: #{truncated_command}",
+        kind: :hook_progress,
+        tool_use_id: parent_tool_use_id,
+        thread_key: thread_key,
+        code_language: nil,
+        render_mode: :plain,
+        source_line_number: nil
+      }
+    ]
+  end
+
+  defp render_hook_progress(_msg), do: []
+
+  defp non_empty_string(value) when is_binary(value) and value != "", do: value
+  defp non_empty_string(_), do: nil
 
   defp plan_write?(tool_use_id, tool_use_index) do
     case Map.get(tool_use_index, tool_use_id) do
