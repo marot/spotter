@@ -2,6 +2,8 @@ defmodule SpotterWeb.HooksController do
   @moduledoc false
   use Phoenix.Controller, formats: [:json]
 
+  alias Spotter.Observability.FlowHub
+  alias Spotter.Observability.FlowKeys
   alias Spotter.ProductSpec.Jobs.UpdateRollingSpec
   alias Spotter.Services.ActiveSessionRegistry
   alias Spotter.Transcripts.Commit
@@ -27,12 +29,22 @@ defmodule SpotterWeb.HooksController do
     hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "PostToolUse"
     hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
 
+    flow_keys =
+      [FlowKeys.session(session_id)] ++ Enum.map(hashes, &FlowKeys.commit/1)
+
     OtelTraceHelpers.with_span "spotter.hook.commit_event", %{
       "spotter.session_id" => session_id,
       "spotter.hash_count" => length(hashes),
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      emit_hook_received("commit_event", flow_keys, %{
+        "session_id" => session_id,
+        "hash_count" => length(hashes),
+        "hook_event" => hook_event,
+        "hook_script" => hook_script
+      })
+
       ActiveSessionRegistry.touch(session_id, :commit_event)
 
       with :ok <- validate_hashes(hashes),
@@ -44,6 +56,8 @@ defmodule SpotterWeb.HooksController do
         enqueue_analyze_hotspots(hashes, session)
         enqueue_rolling_spec(hashes, session)
 
+        emit_hook_outcome("commit_event", :ok, flow_keys)
+
         conn
         |> put_status(:created)
         |> OtelTraceHelpers.put_trace_response_header()
@@ -51,6 +65,7 @@ defmodule SpotterWeb.HooksController do
       else
         {:error, :too_many} ->
           OtelTraceHelpers.set_error("too_many_hashes", %{"http.status_code" => 400})
+          emit_hook_outcome("commit_event", :error, flow_keys)
 
           conn
           |> put_status(:bad_request)
@@ -59,6 +74,7 @@ defmodule SpotterWeb.HooksController do
 
         {:error, :invalid_format} ->
           OtelTraceHelpers.set_error("invalid_format", %{"http.status_code" => 400})
+          emit_hook_outcome("commit_event", :error, flow_keys)
 
           conn
           |> put_status(:bad_request)
@@ -67,6 +83,7 @@ defmodule SpotterWeb.HooksController do
 
         {:error, :session_not_found} ->
           OtelTraceHelpers.set_error("session_not_found", %{"http.status_code" => 404})
+          emit_hook_outcome("commit_event", :error, flow_keys)
 
           conn
           |> put_status(:not_found)
@@ -91,6 +108,7 @@ defmodule SpotterWeb.HooksController do
       when is_binary(session_id) do
     hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "PostToolUse"
     hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
+    flow_keys = [FlowKeys.session(session_id)]
 
     OtelTraceHelpers.with_span "spotter.hook.file_snapshot", %{
       "spotter.session_id" => session_id,
@@ -98,6 +116,13 @@ defmodule SpotterWeb.HooksController do
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      emit_hook_received("file_snapshot", flow_keys, %{
+        "session_id" => session_id,
+        "tool_use_id" => params["tool_use_id"],
+        "hook_event" => hook_event,
+        "hook_script" => hook_script
+      })
+
       ActiveSessionRegistry.touch(session_id, :file_snapshot)
 
       with {:ok, session} <- find_session(session_id),
@@ -105,6 +130,7 @@ defmodule SpotterWeb.HooksController do
            {:ok, _snapshot} <- Ash.create(FileSnapshot, attrs) do
         maybe_update_line_stats(session, attrs)
         enqueue_heatmap(session)
+        emit_hook_outcome("file_snapshot", :ok, flow_keys)
 
         conn
         |> put_status(:created)
@@ -113,6 +139,7 @@ defmodule SpotterWeb.HooksController do
       else
         {:error, :session_not_found} ->
           OtelTraceHelpers.set_error("session_not_found", %{"http.status_code" => 404})
+          emit_hook_outcome("file_snapshot", :error, flow_keys)
 
           conn
           |> put_status(:not_found)
@@ -125,6 +152,8 @@ defmodule SpotterWeb.HooksController do
             "error.details" => reason
           })
 
+          emit_hook_outcome("file_snapshot", :error, flow_keys)
+
           conn
           |> put_status(:bad_request)
           |> OtelTraceHelpers.put_trace_response_header()
@@ -132,6 +161,7 @@ defmodule SpotterWeb.HooksController do
 
         {:error, changeset} ->
           OtelTraceHelpers.set_error("validation_error", %{"http.status_code" => 422})
+          emit_hook_outcome("file_snapshot", :error, flow_keys)
 
           conn
           |> put_status(:unprocessable_entity)
@@ -156,6 +186,7 @@ defmodule SpotterWeb.HooksController do
       when is_binary(session_id) do
     hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "PostToolUse"
     hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
+    flow_keys = [FlowKeys.session(session_id)]
 
     OtelTraceHelpers.with_span "spotter.hook.tool_call", %{
       "spotter.session_id" => session_id,
@@ -164,10 +195,20 @@ defmodule SpotterWeb.HooksController do
       "spotter.hook.event" => hook_event,
       "spotter.hook.script" => hook_script
     } do
+      emit_hook_received("tool_call", flow_keys, %{
+        "session_id" => session_id,
+        "tool_use_id" => params["tool_use_id"],
+        "tool_name" => params["tool_name"],
+        "hook_event" => hook_event,
+        "hook_script" => hook_script
+      })
+
       ActiveSessionRegistry.touch(session_id, :tool_call)
 
       with {:ok, session} <- Sessions.find_or_create(session_id),
            {:ok, _tool_call} <- create_tool_call(session, params) do
+        emit_hook_outcome("tool_call", :ok, flow_keys)
+
         conn
         |> put_status(:created)
         |> OtelTraceHelpers.put_trace_response_header()
@@ -175,6 +216,7 @@ defmodule SpotterWeb.HooksController do
       else
         {:error, :validation_error, changeset} ->
           OtelTraceHelpers.set_error("validation_error", %{"http.status_code" => 422})
+          emit_hook_outcome("tool_call", :error, flow_keys)
 
           conn
           |> put_status(:unprocessable_entity)
@@ -183,6 +225,7 @@ defmodule SpotterWeb.HooksController do
 
         {:error, reason} ->
           OtelTraceHelpers.set_error("session_creation_error", %{"http.status_code" => 422})
+          emit_hook_outcome("tool_call", :error, flow_keys)
 
           conn
           |> put_status(:unprocessable_entity)
@@ -243,21 +286,78 @@ defmodule SpotterWeb.HooksController do
     end
   end
 
-  defp enqueue_heatmap(session) do
-    %{project_id: session.project_id}
-    |> ComputeHeatmap.new()
-    |> Oban.insert()
+  # --- Flow event helpers ---
 
-    %{project_id: session.project_id}
-    |> ComputeCoChange.new()
-    |> Oban.insert()
+  defp emit_hook_received(hook_name, flow_keys, payload) do
+    FlowHub.record(%{
+      kind: "hook.#{hook_name}.received",
+      status: :running,
+      flow_keys: flow_keys,
+      summary: "Hook #{hook_name} received",
+      payload: payload
+    })
+  rescue
+    _ -> :ok
+  end
+
+  defp emit_hook_outcome(hook_name, status, flow_keys) do
+    FlowHub.record(%{
+      kind: "hook.#{hook_name}.#{status}",
+      status: status,
+      flow_keys: flow_keys,
+      summary: "Hook #{hook_name} #{status}"
+    })
+  rescue
+    _ -> :ok
+  end
+
+  defp insert_and_emit(args, worker_module, flow_payload) do
+    changeset = worker_module.new(args)
+
+    case Oban.insert(changeset) do
+      {:ok, job} ->
+        flow_keys =
+          [FlowKeys.oban(to_string(job.id))] ++ FlowKeys.derive(flow_payload)
+
+        FlowHub.record(%{
+          kind: "oban.enqueued",
+          status: :queued,
+          flow_keys: flow_keys,
+          summary: "Enqueued #{inspect(worker_module)}",
+          payload:
+            Map.merge(flow_payload, %{
+              "job_id" => job.id,
+              "worker" => inspect(worker_module),
+              "queue" => to_string(job.queue)
+            })
+        })
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  # --- Enqueue helpers ---
+
+  defp enqueue_heatmap(session) do
+    insert_and_emit(%{project_id: session.project_id}, ComputeHeatmap, %{
+      "project_id" => session.project_id
+    })
+
+    insert_and_emit(%{project_id: session.project_id}, ComputeCoChange, %{
+      "project_id" => session.project_id
+    })
   end
 
   defp enqueue_analyze_hotspots(hashes, session) when hashes != [] do
     Enum.each(hashes, fn hash ->
-      %{project_id: session.project_id, commit_hash: hash}
-      |> AnalyzeCommitHotspots.new()
-      |> Oban.insert()
+      insert_and_emit(
+        %{project_id: session.project_id, commit_hash: hash},
+        AnalyzeCommitHotspots,
+        %{"project_id" => session.project_id, "commit_hash" => hash}
+      )
     end)
   end
 
@@ -269,7 +369,10 @@ defmodule SpotterWeb.HooksController do
         %{project_id: session.project_id, commit_hash: hash, git_cwd: session.cwd || "."}
         |> maybe_add_trace_id()
 
-      args |> UpdateRollingSpec.new() |> Oban.insert()
+      insert_and_emit(args, UpdateRollingSpec, %{
+        "project_id" => session.project_id,
+        "commit_hash" => hash
+      })
     end)
   end
 
@@ -284,9 +387,10 @@ defmodule SpotterWeb.HooksController do
       }
       |> maybe_add_trace_id()
 
-    args
-    |> EnrichCommits.new()
-    |> Oban.insert()
+    insert_and_emit(args, EnrichCommits, %{
+      "session_id" => session.session_id,
+      "commit_hashes" => hashes
+    })
   end
 
   defp enqueue_enrichment(_, _), do: :ok
