@@ -8,7 +8,7 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
   require OpenTelemetry.Tracer, as: Tracer
 
   alias Spotter.Services.SessionCommitLinker
-  alias Spotter.Transcripts.{Commit, Session}
+  alias Spotter.Transcripts.{Commit, CommitFile, Session}
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -61,6 +61,7 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
   defp enrich_one(hash, git_cwd) do
     with {:ok, metadata} <- git_show(hash, git_cwd),
          {:ok, commit} <- update_commit(hash, metadata) do
+      upsert_commit_files(commit, git_cwd)
       {:ok, commit}
     else
       _ ->
@@ -124,13 +125,53 @@ defmodule Spotter.Transcripts.Jobs.EnrichCommits do
   end
 
   defp git_changed_files(hash, cwd) do
-    case System.cmd("git", ["diff-tree", "--no-commit-id", "-r", "--name-only", hash],
+    case git_changed_files_with_status(hash, cwd) do
+      entries when is_list(entries) -> Enum.map(entries, fn {path, _status} -> path end)
+      _ -> []
+    end
+  end
+
+  defp git_changed_files_with_status(hash, cwd) do
+    case System.cmd("git", ["diff-tree", "--no-commit-id", "-r", "--name-status", hash],
            cd: cwd,
            stderr_to_stdout: true
          ) do
-      {output, 0} -> output |> String.split("\n", trim: true)
+      {output, 0} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(&parse_name_status_line/1)
+
+      _ ->
+        []
+    end
+  end
+
+  defp parse_name_status_line(line) do
+    case String.split(line, "\t", parts: 2) do
+      [status, path] -> [{path, parse_git_status(status)}]
       _ -> []
     end
+  end
+
+  defp parse_git_status("A"), do: :added
+  defp parse_git_status("M"), do: :modified
+  defp parse_git_status("D"), do: :deleted
+  defp parse_git_status("R" <> _), do: :renamed
+  defp parse_git_status(_), do: :modified
+
+  defp upsert_commit_files(commit, cwd) do
+    entries = git_changed_files_with_status(commit.commit_hash, cwd)
+
+    Enum.each(entries, fn {path, change_type} ->
+      Ash.create(CommitFile, %{
+        commit_id: commit.id,
+        relative_path: path,
+        change_type: change_type
+      })
+    end)
+  rescue
+    error ->
+      Logger.debug("EnrichCommits: failed to upsert commit files: #{inspect(error)}")
   end
 
   defp git_patch_id(hash, cwd) do

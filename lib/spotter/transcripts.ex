@@ -96,5 +96,7 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.CoChangeGroupCommit
     resource Spotter.Transcripts.CoChangeGroupMemberStat
     resource Spotter.Transcripts.CodeHotspot
+    resource Spotter.Transcripts.CommitFile
+    resource Spotter.Transcripts.AnnotationFileRef
   end
 end

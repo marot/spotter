@@ -34,6 +34,7 @@ defmodule SpotterWeb.Router do
 
     live("/", PaneListLive)
     live("/history", HistoryLive)
+    live("/history/commits/:commit_id", CommitDetailLive)
     live("/reviews", ReviewsLive)
     live("/sessions/:session_id", SessionLive)
     live("/sessions/:session_id/agents/:agent_id", SubagentLive)
@@ -44,5 +45,6 @@ defmodule SpotterWeb.Router do
     live("/projects/:project_id/heatmap", HeatmapLive)
     live("/projects/:project_id/co-change", CoChangeLive)
     live("/projects/:project_id/hotspots", HotspotsLive)
+    live("/projects/:project_id/files/*relative_path", FileDetailLive)
   end
 end

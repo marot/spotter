@@ -225,9 +225,9 @@ defmodule SpotterWeb.HistoryLive do
       <% else %>
         <div :for={row <- @rows} class="history-commit-card">
           <div class="history-commit-header">
-            <code class="history-commit-hash">
+            <a href={"/history/commits/#{row.commit.id}"} class="history-commit-hash">
               {String.slice(row.commit.commit_hash, 0, 8)}
-            </code>
+            </a>
             <div class="history-commit-message">
               <span class="history-commit-subject">
                 {emojify_subject(row.commit.subject)}

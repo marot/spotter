@@ -168,7 +168,7 @@ defmodule SpotterWeb.ReviewsLive do
         |> Ash.Query.filter(session_id in ^session_ids and state == :open)
         |> Ash.Query.sort(inserted_at: :desc)
         |> Ash.read!()
-        |> Ash.load!([:subagent, message_refs: :message])
+        |> Ash.load!([:subagent, :file_refs, message_refs: :message])
       end
 
     assign(socket,
@@ -200,9 +200,11 @@ defmodule SpotterWeb.ReviewsLive do
   end
 
   defp source_badge(:transcript), do: "Transcript"
+  defp source_badge(:file), do: "File"
   defp source_badge(_), do: "Terminal"
 
   defp source_badge_class(:transcript), do: "badge badge-agent"
+  defp source_badge_class(:file), do: "badge badge-verified"
   defp source_badge_class(_), do: "badge badge-terminal"
 
   defp subagent_label(%{subagent: %{slug: slug}} = _ann) when is_binary(slug), do: slug

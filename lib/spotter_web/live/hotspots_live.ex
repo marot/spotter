@@ -252,7 +252,15 @@ defmodule SpotterWeb.HotspotsLive do
         <div class="hotspot-list">
           <div :for={entry <- @hotspot_entries} class="hotspot-card">
             <div class="hotspot-header">
-              <span class="hotspot-path" title={entry.relative_path}>
+              <a
+                :if={@selected_project_id}
+                href={"/projects/#{@selected_project_id}/files/#{entry.relative_path}"}
+                class="hotspot-path"
+                title={entry.relative_path}
+              >
+                {entry.relative_path}
+              </a>
+              <span :if={!@selected_project_id} class="hotspot-path" title={entry.relative_path}>
                 {entry.relative_path}
               </span>
               <span class={score_badge_class(entry.overall_score)}>

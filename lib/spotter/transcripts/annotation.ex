@@ -46,7 +46,7 @@ defmodule Spotter.Transcripts.Annotation do
     attribute :source, :atom do
       allow_nil? false
       default :terminal
-      constraints one_of: [:terminal, :transcript]
+      constraints one_of: [:terminal, :transcript, :file]
     end
 
     attribute :selected_text, :string, allow_nil?: false
@@ -76,5 +76,6 @@ defmodule Spotter.Transcripts.Annotation do
     end
 
     has_many :message_refs, Spotter.Transcripts.AnnotationMessageRef
+    has_many :file_refs, Spotter.Transcripts.AnnotationFileRef
   end
 end

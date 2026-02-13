@@ -6,11 +6,13 @@ defmodule Spotter.Transcripts.ResourcesTest do
 
   alias Spotter.Transcripts.{
     Annotation,
+    AnnotationFileRef,
     AnnotationMessageRef,
     CoChangeGroup,
     CoChangeGroupCommit,
     CoChangeGroupMemberStat,
     Commit,
+    CommitFile,
     FileHeatmap,
     Message,
     Project,
@@ -803,6 +805,158 @@ defmodule Spotter.Transcripts.ResourcesTest do
           ordinal: 1
         })
       end
+    end
+  end
+
+  describe "CommitFile" do
+    test "creates a commit file entry" do
+      commit = Ash.create!(Commit, %{commit_hash: String.duplicate("f", 40)})
+
+      cf =
+        Ash.create!(CommitFile, %{
+          commit_id: commit.id,
+          relative_path: "lib/foo.ex",
+          change_type: :added
+        })
+
+      assert cf.relative_path == "lib/foo.ex"
+      assert cf.change_type == :added
+    end
+
+    test "upserts by commit + relative_path identity" do
+      commit = Ash.create!(Commit, %{commit_hash: String.duplicate("g", 40)})
+
+      first =
+        Ash.create!(CommitFile, %{
+          commit_id: commit.id,
+          relative_path: "lib/bar.ex",
+          change_type: :added
+        })
+
+      second =
+        Ash.create!(CommitFile, %{
+          commit_id: commit.id,
+          relative_path: "lib/bar.ex",
+          change_type: :modified
+        })
+
+      assert first.id == second.id
+      assert second.change_type == :modified
+    end
+
+    test "allows multiple files per commit" do
+      commit = Ash.create!(Commit, %{commit_hash: String.duplicate("h", 40)})
+
+      cf1 = Ash.create!(CommitFile, %{commit_id: commit.id, relative_path: "lib/a.ex"})
+      cf2 = Ash.create!(CommitFile, %{commit_id: commit.id, relative_path: "lib/b.ex"})
+
+      assert cf1.id != cf2.id
+    end
+  end
+
+  describe "AnnotationFileRef" do
+    setup do
+      project = Ash.create!(Project, %{name: "test-fileref", pattern: "^test"})
+
+      session =
+        Ash.create!(Session, %{
+          session_id: Ash.UUID.generate(),
+          transcript_dir: "test-dir",
+          project_id: project.id
+        })
+
+      ann =
+        Ash.create!(Annotation, %{
+          session_id: session.id,
+          source: :file,
+          selected_text: "def foo",
+          comment: "check this function"
+        })
+
+      %{project: project, session: session, annotation: ann}
+    end
+
+    test "creates file annotation with line range", %{annotation: ann, project: project} do
+      ref =
+        Ash.create!(AnnotationFileRef, %{
+          annotation_id: ann.id,
+          project_id: project.id,
+          relative_path: "lib/foo.ex",
+          line_start: 10,
+          line_end: 15
+        })
+
+      assert ref.relative_path == "lib/foo.ex"
+      assert ref.line_start == 10
+      assert ref.line_end == 15
+    end
+
+    test "rejects line_end < line_start", %{annotation: ann, project: project} do
+      assert_raise Ash.Error.Invalid, fn ->
+        Ash.create!(AnnotationFileRef, %{
+          annotation_id: ann.id,
+          project_id: project.id,
+          relative_path: "lib/foo.ex",
+          line_start: 20,
+          line_end: 10
+        })
+      end
+    end
+
+    test "rejects non-positive line numbers", %{annotation: ann, project: project} do
+      assert_raise Ash.Error.Invalid, fn ->
+        Ash.create!(AnnotationFileRef, %{
+          annotation_id: ann.id,
+          project_id: project.id,
+          relative_path: "lib/foo.ex",
+          line_start: 0,
+          line_end: 5
+        })
+      end
+    end
+
+    test "annotation with source :file is loadable with file_refs", %{
+      annotation: ann,
+      project: project
+    } do
+      Ash.create!(AnnotationFileRef, %{
+        annotation_id: ann.id,
+        project_id: project.id,
+        relative_path: "lib/foo.ex",
+        line_start: 1,
+        line_end: 5
+      })
+
+      loaded = Ash.load!(ann, :file_refs)
+      assert length(loaded.file_refs) == 1
+      assert hd(loaded.file_refs).relative_path == "lib/foo.ex"
+    end
+  end
+
+  describe "Annotation with :file source" do
+    setup do
+      project = Ash.create!(Project, %{name: "test-file-ann", pattern: "^test"})
+
+      session =
+        Ash.create!(Session, %{
+          session_id: Ash.UUID.generate(),
+          transcript_dir: "test-dir",
+          project_id: project.id
+        })
+
+      %{session: session}
+    end
+
+    test "creates annotation with source :file", %{session: session} do
+      ann =
+        Ash.create!(Annotation, %{
+          session_id: session.id,
+          source: :file,
+          selected_text: "some code",
+          comment: "review this"
+        })
+
+      assert ann.source == :file
     end
   end
 end

@@ -36,7 +36,7 @@ defmodule Spotter.Services.ReviewContextBuilder do
     |> Ash.Query.filter(session_id in ^session_ids and state == :open)
     |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.read!()
-    |> Ash.load!(message_refs: :message)
+    |> Ash.load!([:file_refs, message_refs: :message])
   end
 
   defp format_context(project, annotations, sessions_by_id) do
@@ -80,13 +80,26 @@ defmodule Spotter.Services.ReviewContextBuilder do
           ""
       end
 
+    file_refs = format_file_refs(ann)
+
     """
     - [#{ann.source}] Session: #{session_label}
       Text: #{text}
       Comment: #{ann.comment}
-    #{message_ids}\
+    #{message_ids}#{file_refs}\
     """
   end
+
+  defp format_file_refs(%{file_refs: refs}) when is_list(refs) and refs != [] do
+    lines =
+      Enum.map_join(refs, ", ", fn ref ->
+        "#{ref.relative_path}:#{ref.line_start}-#{ref.line_end}"
+      end)
+
+    "  Files: #{lines}\n"
+  end
+
+  defp format_file_refs(_), do: ""
 
   defp truncate(text, max) when byte_size(text) <= max, do: text
   defp truncate(text, max), do: String.slice(text, 0, max) <> "..."

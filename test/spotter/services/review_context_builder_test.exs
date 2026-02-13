@@ -4,7 +4,15 @@ defmodule Spotter.Services.ReviewContextBuilderTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
   alias Spotter.Services.ReviewContextBuilder
-  alias Spotter.Transcripts.{Annotation, AnnotationMessageRef, Message, Project, Session}
+
+  alias Spotter.Transcripts.{
+    Annotation,
+    AnnotationFileRef,
+    AnnotationMessageRef,
+    Message,
+    Project,
+    Session
+  }
 
   setup do
     :ok = Sandbox.checkout(Repo)
@@ -132,5 +140,32 @@ defmodule Spotter.Services.ReviewContextBuilderTest do
 
   test "returns error for invalid project id" do
     assert {:error, _} = ReviewContextBuilder.build(Ash.UUID.generate())
+  end
+
+  test "builds context with file annotation and file refs" do
+    {project, session} = create_project_with_session()
+
+    ann =
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        source: :file,
+        selected_text: "def foo, do: :bar",
+        comment: "needs refactor"
+      })
+
+    Ash.create!(AnnotationFileRef, %{
+      annotation_id: ann.id,
+      project_id: project.id,
+      relative_path: "lib/foo.ex",
+      line_start: 10,
+      line_end: 12
+    })
+
+    {:ok, context} = ReviewContextBuilder.build(project.id)
+
+    assert context =~ "[file]"
+    assert context =~ "def foo, do: :bar"
+    assert context =~ "needs refactor"
+    assert context =~ "Files: lib/foo.ex:10-12"
   end
 end

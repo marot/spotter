@@ -19,6 +19,7 @@ defmodule SpotterWeb.TranscriptComponents do
     * `:clicked_subagent` - currently clicked subagent ref (default `nil`)
     * `:show_debug` - whether debug sidecar is visible (default `false`)
     * `:anchors` - list of sync anchors for debug mode (default `[]`)
+    * `:panel_id` - DOM id for the transcript container (default "transcript-messages")
     * `:empty_message` - text shown when no lines exist (default "No transcript available.")
   """
   attr(:rendered_lines, :list, required: true)
@@ -28,6 +29,7 @@ defmodule SpotterWeb.TranscriptComponents do
   attr(:clicked_subagent, :string, default: nil)
   attr(:show_debug, :boolean, default: false)
   attr(:anchors, :list, default: [])
+  attr(:panel_id, :string, default: "transcript-messages")
   attr(:empty_message, :string, default: "No transcript available.")
 
   def transcript_panel(assigns) do
@@ -41,7 +43,7 @@ defmodule SpotterWeb.TranscriptComponents do
     ~H"""
     <%= if @rendered_lines != [] do %>
       <div
-        id="transcript-messages"
+        id={@panel_id}
         data-testid="transcript-container"
         phx-hook="TranscriptHighlighter"
         phx-update="replace"

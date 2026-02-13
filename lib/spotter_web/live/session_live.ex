@@ -3,6 +3,7 @@ defmodule SpotterWeb.SessionLive do
   use AshComputer.LiveView
 
   import SpotterWeb.TranscriptComponents
+  import SpotterWeb.AnnotationComponents
 
   alias Spotter.Services.{
     ReviewSessionRegistry,
@@ -537,22 +538,6 @@ defmodule SpotterWeb.SessionLive do
     end)
   end
 
-  defp selection_label(:transcript, [_ | _] = message_ids) do
-    "Selected transcript text (#{length(message_ids)} messages)"
-  end
-
-  defp selection_label(:transcript, _), do: "Selected transcript text"
-  defp selection_label(_, _), do: "Selected terminal text"
-
-  defp source_badge(:transcript), do: "Transcript"
-  defp source_badge(_), do: "Terminal"
-
-  defp source_badge_color(:transcript),
-    do: "background: rgba(91, 156, 245, 0.15); color: var(--accent-blue);"
-
-  defp source_badge_color(_),
-    do: "background: rgba(229, 168, 75, 0.15); color: var(--accent-amber);"
-
   @impl true
   def render(assigns) do
     ~H"""
@@ -699,51 +684,16 @@ defmodule SpotterWeb.SessionLive do
 
         <%!-- Annotations tab --%>
         <div :if={@active_sidebar_tab == :annotations} class="sidebar-tab-content">
-          <%= if @selected_text do %>
-            <div class="annotation-form">
-              <div class="annotation-form-hint">
-                {selection_label(@selection_source, @selection_message_ids)}
-              </div>
-              <pre class="annotation-form-preview"><%= @selected_text %></pre>
-              <form phx-submit="save_annotation">
-                <textarea
-                  name="comment"
-                  placeholder="Add a comment..."
-                  required
-                  class="annotation-form-textarea"
-                />
-                <div class="annotation-form-actions">
-                  <button type="submit" class="btn btn-success">Save</button>
-                  <button type="button" class="btn" phx-click="clear_selection">Cancel</button>
-                </div>
-              </form>
-            </div>
-          <% end %>
+          <.annotation_editor
+            :if={@selected_text}
+            selected_text={@selected_text}
+            selection_label={selection_label(@selection_source, @selection_message_ids)}
+          />
 
-          <%= if @annotations == [] do %>
-            <p class="text-muted text-sm">Select text in terminal or transcript to add annotations.</p>
-          <% end %>
-
-          <%= for ann <- @annotations do %>
-            <div class="annotation-card" phx-click="highlight_annotation" phx-value-id={ann.id}>
-              <div class="flex items-center gap-2 mb-2">
-                <span style={"font-size: var(--text-xs); padding: 1px 6px; border-radius: 3px; #{source_badge_color(ann.source)}"}>
-                  {source_badge(ann.source)}
-                </span>
-                <span :if={ann.source == :transcript && ann.message_refs != []} class="text-muted text-xs">
-                  {length(ann.message_refs)} messages
-                </span>
-              </div>
-              <pre class="annotation-text"><%= ann.selected_text %></pre>
-              <p class="annotation-comment"><%= ann.comment %></p>
-              <div class="annotation-meta">
-                <span class="annotation-time"><%= Calendar.strftime(ann.inserted_at, "%H:%M") %></span>
-                <button class="btn-ghost text-error text-xs" phx-click="delete_annotation" phx-value-id={ann.id}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          <% end %>
+          <.annotation_cards
+            annotations={@annotations}
+            empty_message="Select text in terminal or transcript to add annotations."
+          />
         </div>
 
         <%!-- Errors tab --%>

@@ -399,7 +399,11 @@ defmodule SpotterWeb.CoChangeLive do
                       aria-label={"Expand details for #{row.member}"}
                     >
                       <span class="expand-icon">{if @expanded_member == row.member, do: "▾", else: "▸"}</span>
-                      {row.member}
+                      <%= if @selected_project_id && @scope == :file do %>
+                        <a href={"/projects/#{@selected_project_id}/files/#{row.member}"} class="file-link">{row.member}</a>
+                      <% else %>
+                        {row.member}
+                      <% end %>
                     </button>
                   </td>
                   <td>{row.max_frequency_30d}</td>

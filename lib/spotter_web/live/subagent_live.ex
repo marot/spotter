@@ -3,6 +3,7 @@ defmodule SpotterWeb.SubagentLive do
   use AshComputer.LiveView
 
   import SpotterWeb.TranscriptComponents
+  import SpotterWeb.AnnotationComponents
 
   alias Spotter.Services.ReviewUpdates
 
@@ -228,60 +229,16 @@ defmodule SpotterWeb.SubagentLive do
           <div class="sidebar-tab-content">
             <h3 class="mb-4">Annotations</h3>
 
-            <%= if @selected_text do %>
-              <div class="annotation-form">
-                <div class="annotation-form-hint">
-                  Selected transcript text
-                  <span :if={@selection_message_ids != []}>
-                    ({length(@selection_message_ids)} messages)
-                  </span>
-                </div>
-                <pre class="annotation-form-preview"><%= @selected_text %></pre>
-                <form phx-submit="save_annotation">
-                  <textarea
-                    name="comment"
-                    placeholder="Add a comment..."
-                    required
-                    class="annotation-form-textarea"
-                  />
-                  <div class="annotation-form-actions">
-                    <button type="submit" class="btn btn-success">Save</button>
-                    <button type="button" class="btn" phx-click="clear_selection">Cancel</button>
-                  </div>
-                </form>
-              </div>
-            <% end %>
+            <.annotation_editor
+              :if={@selected_text}
+              selected_text={@selected_text}
+              selection_label={selection_label(:transcript, @selection_message_ids)}
+            />
 
-            <%= if @annotations == [] do %>
-              <p class="text-muted text-sm">
-                Select text in the transcript to add annotations.
-              </p>
-            <% end %>
-
-            <%= for ann <- @annotations do %>
-              <div class="annotation-card" phx-click="highlight_annotation" phx-value-id={ann.id}>
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="badge badge-agent">Transcript</span>
-                  <span :if={ann.message_refs != []} class="text-muted text-xs">
-                    {length(ann.message_refs)} messages
-                  </span>
-                </div>
-                <pre class="annotation-text"><%= ann.selected_text %></pre>
-                <p class="annotation-comment"><%= ann.comment %></p>
-                <div class="annotation-meta">
-                  <span class="annotation-time">
-                    <%= Calendar.strftime(ann.inserted_at, "%H:%M") %>
-                  </span>
-                  <button
-                    class="btn-ghost text-error text-xs"
-                    phx-click="delete_annotation"
-                    phx-value-id={ann.id}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            <% end %>
+            <.annotation_cards
+              annotations={@annotations}
+              empty_message="Select text in the transcript to add annotations."
+            />
           </div>
         </div>
       </div>
