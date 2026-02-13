@@ -5,7 +5,11 @@ defmodule Spotter.ProductSpec do
 
   import Ecto.Query
 
-  alias Spotter.ProductSpec.Repo
+  alias Ecto.Adapters.SQL
+  alias Spotter.ProductSpec.{Repo, RollingSpecRun, SpecDiff}
+
+  require Ash.Query
+  require OpenTelemetry.Tracer, as: Tracer
 
   @doc "Lists all domains for the given project, sorted by name."
   @spec list_domains(String.t()) :: [map()]
@@ -85,6 +89,98 @@ defmodule Spotter.ProductSpec do
     Enum.map(domains, &attach_features(&1, features_by_domain, requirements_by_feature))
   end
 
+  @doc """
+  Returns the full spec tree at a specific Dolt commit hash using time-travel queries.
+
+  Returns the same shape as `tree/1`.
+  """
+  @spec tree_at(String.t(), String.t()) :: [map()]
+  def tree_at(project_id, dolt_commit_hash) do
+    Tracer.with_span "spotter.product_spec.tree_at" do
+      Tracer.set_attribute("spotter.project_id", project_id)
+      Tracer.set_attribute("spotter.dolt_commit_hash", dolt_commit_hash)
+
+      domains = query_domains_at(project_id, dolt_commit_hash)
+      features = query_features_at(project_id, dolt_commit_hash)
+      requirements = query_requirements_at(project_id, dolt_commit_hash)
+
+      features_by_domain = Enum.group_by(features, & &1.domain_id)
+      requirements_by_feature = Enum.group_by(requirements, & &1.feature_id)
+
+      Enum.map(domains, &attach_features(&1, features_by_domain, requirements_by_feature))
+    end
+  end
+
+  @doc """
+  Resolves the effective spec tree for a Git commit.
+
+  If the commit's spec run has no Dolt changes (dolt_commit_hash is nil),
+  falls back to the previous run's snapshot.
+
+  Returns `{:ok, %{tree: [...], effective_dolt_commit_hash: hash | nil}}`
+  or `{:error, :no_spec_run}`.
+  """
+  @spec tree_for_commit(String.t(), String.t()) ::
+          {:ok, %{tree: [map()], effective_dolt_commit_hash: String.t() | nil}}
+          | {:error, :no_spec_run}
+  def tree_for_commit(project_id, commit_hash) do
+    Tracer.with_span "spotter.product_spec.tree_for_commit" do
+      Tracer.set_attribute("spotter.project_id", project_id)
+      Tracer.set_attribute("spotter.commit_hash", commit_hash)
+
+      case load_spec_run(project_id, commit_hash) do
+        nil ->
+          Tracer.set_status(:error, "no_spec_run")
+          {:error, :no_spec_run}
+
+        run ->
+          effective_hash = run.dolt_commit_hash || find_previous_dolt_hash(project_id, run)
+
+          if effective_hash do
+            {:ok,
+             %{
+               tree: tree_at(project_id, effective_hash),
+               effective_dolt_commit_hash: effective_hash
+             }}
+          else
+            {:ok, %{tree: [], effective_dolt_commit_hash: nil}}
+          end
+      end
+    end
+  end
+
+  @doc """
+  Computes a semantic spec diff for a Git commit vs its previous spec state.
+
+  Returns:
+  - `{:error, :no_spec_run}` when no run exists for this commit
+  - `{:ok, %{kind: :no_changes, added: [], removed: [], changed: []}}` when dolt_commit_hash is nil
+  - `{:ok, diff_result}` with the semantic diff
+  """
+  @spec diff_for_commit(String.t(), String.t()) ::
+          {:ok, map()} | {:error, :no_spec_run}
+  def diff_for_commit(project_id, commit_hash) do
+    Tracer.with_span "spotter.product_spec.diff_for_commit" do
+      Tracer.set_attribute("spotter.project_id", project_id)
+      Tracer.set_attribute("spotter.commit_hash", commit_hash)
+
+      case load_spec_run(project_id, commit_hash) do
+        nil ->
+          Tracer.set_status(:error, "no_spec_run")
+          {:error, :no_spec_run}
+
+        %{dolt_commit_hash: nil} ->
+          {:ok, %{kind: :no_changes, added: [], removed: [], changed: []}}
+
+        run ->
+          base_hash = find_previous_dolt_hash(project_id, run)
+          from_tree = if base_hash, do: tree_at(project_id, base_hash), else: []
+          to_tree = tree_at(project_id, run.dolt_commit_hash)
+          {:ok, SpecDiff.diff(from_tree, to_tree)}
+      end
+    end
+  end
+
   defp attach_features(domain, features_by_domain, requirements_by_feature) do
     features =
       features_by_domain
@@ -113,6 +209,170 @@ defmodule Spotter.ProductSpec do
     |> Repo.all()
     |> Enum.group_by(& &1.domain_id)
   end
+
+  # -- Dolt time-travel helpers ------------------------------------------------
+
+  defp query_domains_at(project_id, dolt_commit_hash) do
+    {:ok, result} =
+      SQL.query(
+        Repo,
+        """
+        SELECT id, project_id, spec_key, name, description,
+               updated_by_git_commit, inserted_at, updated_at
+        FROM `product_domains` AS OF ?
+        WHERE project_id = ?
+        ORDER BY name ASC
+        """,
+        [dolt_commit_hash, project_id]
+      )
+
+    Enum.map(result.rows, fn [id, proj_id, spec_key, name, desc, git_commit, ins, upd] ->
+      %{
+        id: id,
+        project_id: proj_id,
+        spec_key: spec_key,
+        name: name,
+        description: desc,
+        updated_by_git_commit: git_commit,
+        inserted_at: ins,
+        updated_at: upd
+      }
+    end)
+  end
+
+  defp query_features_at(project_id, dolt_commit_hash) do
+    {:ok, result} =
+      SQL.query(
+        Repo,
+        """
+        SELECT id, project_id, domain_id, spec_key, name, description,
+               updated_by_git_commit, inserted_at, updated_at
+        FROM `product_features` AS OF ?
+        WHERE project_id = ?
+        ORDER BY name ASC
+        """,
+        [dolt_commit_hash, project_id]
+      )
+
+    Enum.map(result.rows, fn [id, proj_id, dom_id, spec_key, name, desc, git_commit, ins, upd] ->
+      %{
+        id: id,
+        project_id: proj_id,
+        domain_id: dom_id,
+        spec_key: spec_key,
+        name: name,
+        description: desc,
+        updated_by_git_commit: git_commit,
+        inserted_at: ins,
+        updated_at: upd
+      }
+    end)
+  end
+
+  defp query_requirements_at(project_id, dolt_commit_hash) do
+    {:ok, result} =
+      SQL.query(
+        Repo,
+        """
+        SELECT id, project_id, feature_id, spec_key, statement, rationale,
+               acceptance_criteria, priority, updated_by_git_commit, inserted_at, updated_at
+        FROM `product_requirements` AS OF ?
+        WHERE project_id = ?
+        ORDER BY spec_key ASC
+        """,
+        [dolt_commit_hash, project_id]
+      )
+
+    Enum.map(result.rows, fn [
+                               id,
+                               proj_id,
+                               feat_id,
+                               spec_key,
+                               stmt,
+                               rat,
+                               ac,
+                               pri,
+                               git_commit,
+                               ins,
+                               upd
+                             ] ->
+      %{
+        id: id,
+        project_id: proj_id,
+        feature_id: feat_id,
+        spec_key: spec_key,
+        statement: stmt,
+        rationale: rat,
+        acceptance_criteria: ac,
+        priority: pri,
+        updated_by_git_commit: git_commit,
+        inserted_at: ins,
+        updated_at: upd
+      }
+    end)
+  end
+
+  # -- Spec run helpers -------------------------------------------------------
+
+  defp load_spec_run(project_id, commit_hash) do
+    RollingSpecRun
+    |> Ash.Query.filter(project_id == ^project_id and commit_hash == ^commit_hash)
+    |> Ash.read_one!()
+  end
+
+  defp find_previous_dolt_hash(project_id, current_run) do
+    # Load all completed runs for this project with non-nil dolt_commit_hash
+    runs =
+      RollingSpecRun
+      |> Ash.Query.filter(
+        project_id == ^project_id and
+          not is_nil(dolt_commit_hash) and
+          id != ^current_run.id
+      )
+      |> Ash.read!()
+
+    # Sort by commit timestamp, falling back to run timestamps
+    commit_hashes = Enum.map(runs, & &1.commit_hash)
+    commits_by_hash = load_commits_by_hash(commit_hashes)
+
+    runs
+    |> Enum.map(fn run ->
+      commit = Map.get(commits_by_hash, run.commit_hash)
+      sort_date = commit_sort_date(commit) || run_sort_date(run)
+      {sort_date, run}
+    end)
+    |> Enum.filter(fn {date, _run} ->
+      current_date =
+        commit_sort_date(Map.get(commits_by_hash, current_run.commit_hash)) ||
+          run_sort_date(current_run)
+
+      date != nil and current_date != nil and DateTime.compare(date, current_date) == :lt
+    end)
+    |> Enum.sort_by(fn {date, _run} -> date end, {:desc, DateTime})
+    |> List.first()
+    |> case do
+      {_date, run} -> run.dolt_commit_hash
+      nil -> nil
+    end
+  end
+
+  defp load_commits_by_hash([]), do: %{}
+
+  defp load_commits_by_hash(hashes) do
+    alias Spotter.Transcripts.Commit
+
+    Commit
+    |> Ash.Query.filter(commit_hash in ^hashes)
+    |> Ash.read!()
+    |> Map.new(&{&1.commit_hash, &1})
+  end
+
+  defp commit_sort_date(nil), do: nil
+  defp commit_sort_date(commit), do: commit.committed_at || commit.inserted_at
+
+  defp run_sort_date(run), do: run.started_at || run.inserted_at
+
+  # -- Existing private helpers -----------------------------------------------
 
   defp list_all_requirements(project_id) do
     from(r in "product_requirements",
