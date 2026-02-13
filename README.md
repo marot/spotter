@@ -81,39 +81,21 @@ Start the Dolt SQL-server:
 docker compose -f docker-compose.dolt.yml up -d
 ```
 
-Build the spec agent (Node/TypeScript):
+The spec agent runs in-process using `claude_agent_sdk` (Elixir). The schema is created automatically on startup.
 
-```bash
-cd agent && npm ci && npm run build && cd ..
-```
-
-Enable the feature and start Spotter:
-
-```bash
-export SPOTTER_PRODUCT_SPEC_ENABLED=true
-mix phx.server
-```
-
-The schema (domains, features, requirements) is created automatically on startup.
-
-### Running the spec agent manually
-
-```bash
-echo '{"project_id":"...","commit_hash":"...","commit_subject":"...","commit_body":"","diff_stats":{},"patch_files":[],"context_windows":{}}' | scripts/run_spec_agent.sh
-```
+If Dolt is unavailable, the app boots normally — product spec features are simply inactive.
 
 ### Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `SPOTTER_PRODUCT_SPEC_ENABLED` | `false` | Set to `true` to enable |
 | `SPOTTER_DOLT_HOST` | `localhost` | Dolt server hostname |
 | `SPOTTER_DOLT_PORT` | `13306` | Dolt server port |
 | `SPOTTER_DOLT_DATABASE` | `spotter_product` | Dolt database name |
 | `SPOTTER_DOLT_USERNAME` | `spotter` | Dolt username |
 | `SPOTTER_DOLT_PASSWORD` | `spotter` | Dolt password |
 
-Tests run without Dolt (feature is disabled by default in test config).
+Tests run without Dolt. Integration tests require Dolt: `mix test --include live_dolt`.
 
 ## Local E2E (Docker + Playwright + Live Claude)
 

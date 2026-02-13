@@ -12,23 +12,6 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpecTest do
     Sandbox.checkout(Repo)
   end
 
-  describe "perform/1 when product spec disabled" do
-    test "returns :ok without creating a run" do
-      # Product spec is disabled by default in test config
-      job = %Oban.Job{
-        args: %{
-          "project_id" => Ash.UUID.generate(),
-          "commit_hash" => String.duplicate("a", 40)
-        }
-      }
-
-      assert :ok = UpdateRollingSpec.perform(job)
-
-      runs = Ash.read!(RollingSpecRun)
-      assert runs == []
-    end
-  end
-
   describe "perform/1 idempotence" do
     test "skips when run already has status :ok" do
       project_id = Ash.UUID.generate()
@@ -43,12 +26,6 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpecTest do
           finished_at: DateTime.utc_now()
         })
 
-      # Enable product spec temporarily for this test
-      original = Application.get_env(:spotter, :product_spec_enabled)
-      Application.put_env(:spotter, :product_spec_enabled, true)
-
-      on_exit(fn -> Application.put_env(:spotter, :product_spec_enabled, original) end)
-
       job = %Oban.Job{
         args: %{
           "project_id" => project_id,
@@ -58,7 +35,7 @@ defmodule Spotter.ProductSpec.Jobs.UpdateRollingSpecTest do
 
       assert :ok = UpdateRollingSpec.perform(job)
 
-      # Verify the run was marked as skipped (upsert creates new with pending, then idempotence check marks skipped)
+      # Verify the run was marked as skipped
       run =
         RollingSpecRun
         |> Ash.Query.filter(project_id == ^project_id and commit_hash == ^commit_hash)

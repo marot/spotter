@@ -223,15 +223,13 @@ defmodule SpotterWeb.HooksController do
   defp enqueue_analyze_hotspots(_, _), do: :ok
 
   defp enqueue_rolling_spec(hashes, session) when hashes != [] do
-    if Spotter.ProductSpec.enabled?() do
-      Enum.each(hashes, fn hash ->
-        args =
-          %{project_id: session.project_id, commit_hash: hash, git_cwd: session.cwd || "."}
-          |> maybe_add_trace_id()
+    Enum.each(hashes, fn hash ->
+      args =
+        %{project_id: session.project_id, commit_hash: hash, git_cwd: session.cwd || "."}
+        |> maybe_add_trace_id()
 
-        args |> UpdateRollingSpec.new() |> Oban.insert()
-      end)
-    end
+      args |> UpdateRollingSpec.new() |> Oban.insert()
+    end)
   end
 
   defp enqueue_rolling_spec(_, _), do: :ok

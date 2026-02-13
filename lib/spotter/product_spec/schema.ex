@@ -6,6 +6,8 @@ defmodule Spotter.ProductSpec.Schema do
   All statements use `CREATE TABLE IF NOT EXISTS` so they are safe to re-run.
   """
 
+  require Logger
+
   alias Ecto.Adapters.SQL
   alias Spotter.ProductSpec.Repo
 
@@ -16,7 +18,11 @@ defmodule Spotter.ProductSpec.Schema do
   @spec ensure_schema!() :: :ok
   def ensure_schema! do
     for sql <- [domains_ddl(), features_ddl(), requirements_ddl()] do
-      SQL.query!(Repo, sql)
+      case SQL.query(Repo, sql) do
+        {:ok, _} -> :ok
+        # Dolt raises "already exists" for indexes even with IF NOT EXISTS
+        {:error, %MyXQL.Error{message: msg}} -> Logger.debug("Schema DDL skipped: #{msg}")
+      end
     end
 
     :ok

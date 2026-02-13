@@ -5,13 +5,9 @@ services:
       - "13306:3306"
     volumes:
       - spotter_dolt_data:/var/lib/dolt
+      - ./docker/dolt-init.sql:/docker-entrypoint-initdb.d/01-init.sql
     environment:
       DOLT_ROOT_PASSWORD: spotter
-      DOLT_ROOT_HOST: "%"
-      DOLT_DATABASE: spotter_product
-      DOLT_USER: spotter
-      DOLT_PASSWORD: spotter
-      DOLT_USER_HOST: "%"
 
 volumes:
   spotter_dolt_data:

@@ -103,11 +103,9 @@ defmodule Spotter.Transcripts.Jobs.IngestRecentCommits do
   end
 
   defp maybe_enqueue_rolling_spec(project_id, commit) do
-    if Spotter.ProductSpec.enabled?() do
-      %{project_id: project_id, commit_hash: commit.commit_hash}
-      |> UpdateRollingSpec.new()
-      |> Oban.insert()
-    end
+    %{project_id: project_id, commit_hash: commit.commit_hash}
+    |> UpdateRollingSpec.new()
+    |> Oban.insert()
   end
 
   defp update_ingest_state(project_id) do
