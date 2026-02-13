@@ -36,7 +36,12 @@ defmodule Spotter.Transcripts.Commit do
         :hotspots_analyzed_at,
         :hotspots_error,
         :hotspots_version,
-        :hotspots_metadata
+        :hotspots_metadata,
+        :tests_status,
+        :tests_analyzed_at,
+        :tests_error,
+        :tests_version,
+        :tests_metadata
       ]
     end
 
@@ -89,6 +94,21 @@ defmodule Spotter.Transcripts.Commit do
     attribute :hotspots_version, :integer, allow_nil?: false, default: 1
 
     attribute :hotspots_metadata, :map do
+      allow_nil? false
+      default %{}
+    end
+
+    attribute :tests_status, :atom do
+      allow_nil? false
+      default :pending
+      constraints one_of: [:pending, :ok, :error]
+    end
+
+    attribute :tests_analyzed_at, :utc_datetime_usec
+    attribute :tests_error, :string
+    attribute :tests_version, :integer, allow_nil?: false, default: 1
+
+    attribute :tests_metadata, :map do
       allow_nil? false
       default %{}
     end

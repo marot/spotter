@@ -7,6 +7,7 @@ defmodule SpotterWeb.HooksController do
   alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
   alias Spotter.Transcripts.Jobs.AnalyzeCommitHotspots
+  alias Spotter.Transcripts.Jobs.AnalyzeCommitTests
   alias Spotter.Transcripts.Jobs.ComputeCoChange
   alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.Jobs.EnrichCommits
@@ -42,6 +43,7 @@ defmodule SpotterWeb.HooksController do
         enqueue_enrichment(hashes, session)
         enqueue_heatmap(session)
         enqueue_analyze_hotspots(hashes, session)
+        enqueue_analyze_tests(hashes, session)
         enqueue_rolling_spec(hashes, session)
 
         conn
@@ -262,6 +264,16 @@ defmodule SpotterWeb.HooksController do
   end
 
   defp enqueue_analyze_hotspots(_, _), do: :ok
+
+  defp enqueue_analyze_tests(hashes, session) when hashes != [] do
+    Enum.each(hashes, fn hash ->
+      %{project_id: session.project_id, commit_hash: hash}
+      |> AnalyzeCommitTests.new()
+      |> Oban.insert()
+    end)
+  end
+
+  defp enqueue_analyze_tests(_, _), do: :ok
 
   defp enqueue_rolling_spec(hashes, session) when hashes != [] do
     Enum.each(hashes, fn hash ->

@@ -16,6 +16,7 @@ defmodule Spotter.Application do
 
     children =
       [
+        {ClaudeAgentSDK.TaskSupervisor, name: Spotter.ClaudeTaskSupervisor},
         {Phoenix.PubSub, name: Spotter.PubSub},
         Spotter.Services.SessionRegistry,
         Spotter.Services.ActiveSessionRegistry,
@@ -50,6 +51,7 @@ defmodule Spotter.Application do
         This key is needed for:
           - Waiting overlay summaries (Spotter.Services.WaitingSummary)
           - Commit hotspot analysis (Spotter.Services.CommitHotspotAgent)
+          - Commit test extraction (Spotter.Transcripts.Jobs.AnalyzeCommitTests)
 
         Export the key before starting the server:
 

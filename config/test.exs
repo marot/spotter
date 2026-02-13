@@ -19,5 +19,11 @@ config :spotter, SpotterWeb.Endpoint,
 
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
+config :claude_agent_sdk,
+  use_mock: true,
+  task_supervisor_strict: true,
+  tool_execution_timeout_ms: 5_000,
+  timeout_ms: 30_000
+
 # Dolt repo for product spec - use a test-friendly pool size
 config :spotter, Spotter.ProductSpec.Repo, pool_size: 2
