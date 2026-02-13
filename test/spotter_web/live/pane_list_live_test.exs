@@ -23,7 +23,10 @@ defmodule SpotterWeb.PaneListLiveTest do
         project_id: project.id
       })
 
-    %{project: project, session: session}
+    session_with_lines =
+      Ash.update!(session, %{added_delta: 42, removed_delta: 7}, action: :add_line_stats)
+
+    %{project: project, session: session_with_lines}
   end
 
   describe "dashboard renders transcript-only" do
@@ -61,6 +64,13 @@ defmodule SpotterWeb.PaneListLiveTest do
       {:ok, _view, html} = live(build_conn(), "/")
 
       refute html =~ "No tmux panes found"
+    end
+
+    test "renders line stats for session with lines", %{session: _session} do
+      {:ok, _view, html} = live(build_conn(), "/")
+
+      assert html =~ "+42"
+      assert html =~ "-7"
     end
   end
 end

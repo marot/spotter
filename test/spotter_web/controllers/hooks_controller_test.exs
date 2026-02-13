@@ -131,6 +131,80 @@ defmodule SpotterWeb.HooksControllerTest do
     end
   end
 
+  describe "file_snapshot line stats" do
+    test "write source updates session lines_added", %{session: session} do
+      {status, body, _conn} =
+        post_snapshot(%{
+          "session_id" => session.session_id,
+          "tool_use_id" => "tool_lines_add",
+          "file_path" => "/tmp/test.ex",
+          "relative_path" => "test.ex",
+          "content_before" => "a\n",
+          "content_after" => "a\nb\n",
+          "change_type" => "modified",
+          "source" => "write",
+          "timestamp" => DateTime.to_iso8601(DateTime.utc_now())
+        })
+
+      assert status == 201
+      assert body["ok"] == true
+
+      updated_session =
+        Session |> Ash.Query.filter(session_id == ^session.session_id) |> Ash.read_one!()
+
+      assert updated_session.lines_added == 1
+      assert updated_session.lines_removed == 0
+    end
+
+    test "edit source updates session lines_removed", %{session: session} do
+      {status, body, _conn} =
+        post_snapshot(%{
+          "session_id" => session.session_id,
+          "tool_use_id" => "tool_lines_rm",
+          "file_path" => "/tmp/test.ex",
+          "relative_path" => "test.ex",
+          "content_before" => "a\nb\nc\n",
+          "content_after" => "a\n",
+          "change_type" => "modified",
+          "source" => "edit",
+          "timestamp" => DateTime.to_iso8601(DateTime.utc_now())
+        })
+
+      assert status == 201
+      assert body["ok"] == true
+
+      updated_session =
+        Session |> Ash.Query.filter(session_id == ^session.session_id) |> Ash.read_one!()
+
+      assert updated_session.lines_added == 0
+      assert updated_session.lines_removed == 2
+    end
+
+    test "bash source does not update line stats", %{session: session} do
+      {status, body, _conn} =
+        post_snapshot(%{
+          "session_id" => session.session_id,
+          "tool_use_id" => "tool_lines_bash",
+          "file_path" => "/tmp/test.ex",
+          "relative_path" => "test.ex",
+          "content_before" => "a\n",
+          "content_after" => "a\nb\nc\n",
+          "change_type" => "modified",
+          "source" => "bash",
+          "timestamp" => DateTime.to_iso8601(DateTime.utc_now())
+        })
+
+      assert status == 201
+      assert body["ok"] == true
+
+      updated_session =
+        Session |> Ash.Query.filter(session_id == ^session.session_id) |> Ash.read_one!()
+
+      assert updated_session.lines_added == 0
+      assert updated_session.lines_removed == 0
+    end
+  end
+
   describe "file_snapshot relative_path derivation" do
     test "derives relative_path from absolute file_path using session cwd", %{session: _session} do
       project = Ash.create!(Project, %{name: "test-derive", pattern: "^derive"})
