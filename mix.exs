@@ -78,6 +78,10 @@ defmodule Spotter.MixProject do
             description:
               "Use this skill when working with Oban background jobs, queues, or scheduled work.",
             usage_rules: [:oban, ~r/^oban_/]
+          ],
+          "front-end-design": [
+            description: "Use this skill for any Spotter UI/layout/CSS/LiveView changes.",
+            usage_rules: [:ui, :css, :liveview, ~r/\.heex$|spotter\.css$|lib\/spotter_web\/live/]
           ]
         ]
       ]

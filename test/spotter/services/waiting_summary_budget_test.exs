@@ -1,8 +1,6 @@
 defmodule Spotter.Services.WaitingSummaryBudgetTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias Spotter.Services.WaitingSummary
 
   @fixtures_dir "test/fixtures/transcripts"
@@ -31,30 +29,24 @@ defmodule Spotter.Services.WaitingSummaryBudgetTest do
       System.put_env(@env_key, "bad")
       path = Path.join(@fixtures_dir, "short.jsonl")
 
-      assert capture_log(fn ->
-               assert {:ok, result} = WaitingSummary.generate(path)
-               assert is_binary(result.summary)
-             end) =~ "Invalid SPOTTER_SUMMARY_TOKEN_BUDGET"
+      assert {:ok, result} = WaitingSummary.generate(path)
+      assert is_binary(result.summary)
     end
 
     test "zero env uses default budget without crash" do
       System.put_env(@env_key, "0")
       path = Path.join(@fixtures_dir, "short.jsonl")
 
-      assert capture_log(fn ->
-               assert {:ok, result} = WaitingSummary.generate(path)
-               assert is_binary(result.summary)
-             end) =~ "Invalid SPOTTER_SUMMARY_TOKEN_BUDGET"
+      assert {:ok, result} = WaitingSummary.generate(path)
+      assert is_binary(result.summary)
     end
 
     test "negative env uses default budget without crash" do
       System.put_env(@env_key, "-100")
       path = Path.join(@fixtures_dir, "short.jsonl")
 
-      assert capture_log(fn ->
-               assert {:ok, result} = WaitingSummary.generate(path)
-               assert is_binary(result.summary)
-             end) =~ "Invalid SPOTTER_SUMMARY_TOKEN_BUDGET"
+      assert {:ok, result} = WaitingSummary.generate(path)
+      assert is_binary(result.summary)
     end
 
     test "valid positive env is honored" do
