@@ -103,6 +103,7 @@ defmodule SpotterWeb.HooksController do
       with {:ok, session} <- find_session(session_id),
            {:ok, attrs} <- build_attrs(params, session),
            {:ok, _snapshot} <- Ash.create(FileSnapshot, attrs) do
+        maybe_update_line_stats(session, attrs)
         enqueue_heatmap(session)
 
         conn
@@ -199,6 +200,46 @@ defmodule SpotterWeb.HooksController do
       |> put_status(:bad_request)
       |> OtelTraceHelpers.put_trace_response_header()
       |> json(%{error: "session_id is required"})
+    end
+  end
+
+  defp maybe_update_line_stats(session, %{source: source} = attrs)
+       when source in [:write, :edit] do
+    before_lines = count_lines(attrs[:content_before])
+    after_lines = count_lines(attrs[:content_after])
+    added_delta = max(after_lines - before_lines, 0)
+    removed_delta = max(before_lines - after_lines, 0)
+
+    OpenTelemetry.Tracer.set_attribute("spotter.file_snapshot.before_lines", before_lines)
+    OpenTelemetry.Tracer.set_attribute("spotter.file_snapshot.after_lines", after_lines)
+    OpenTelemetry.Tracer.set_attribute("spotter.file_snapshot.lines_added_delta", added_delta)
+    OpenTelemetry.Tracer.set_attribute("spotter.file_snapshot.lines_removed_delta", removed_delta)
+
+    if added_delta > 0 or removed_delta > 0 do
+      Ash.update(session, %{added_delta: added_delta, removed_delta: removed_delta},
+        action: :add_line_stats
+      )
+    else
+      :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp maybe_update_line_stats(_session, _attrs), do: :ok
+
+  defp count_lines(nil), do: 0
+  defp count_lines(""), do: 0
+
+  defp count_lines(content) when is_binary(content) do
+    newlines = content |> :binary.matches("\n") |> length()
+
+    if String.ends_with?(content, "\n") do
+      newlines
+    else
+      newlines + 1
     end
   end
 

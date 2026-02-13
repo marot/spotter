@@ -83,6 +83,21 @@ defmodule Spotter.Transcripts.Session do
       accept []
       change set_attribute(:hidden_at, nil)
     end
+
+    update :add_line_stats do
+      accept []
+
+      argument :added_delta, :integer do
+        allow_nil? false
+      end
+
+      argument :removed_delta, :integer do
+        allow_nil? false
+      end
+
+      change atomic_update(:lines_added, expr(lines_added + ^arg(:added_delta)))
+      change atomic_update(:lines_removed, expr(lines_removed + ^arg(:removed_delta)))
+    end
   end
 
   attributes do
@@ -114,6 +129,16 @@ defmodule Spotter.Transcripts.Session do
     attribute :first_prompt, :string
     attribute :source_created_at, :utc_datetime_usec
     attribute :source_modified_at, :utc_datetime_usec
+
+    attribute :lines_added, :integer do
+      allow_nil? false
+      default 0
+    end
+
+    attribute :lines_removed, :integer do
+      allow_nil? false
+      default 0
+    end
 
     attribute :distilled_summary, :string
     attribute :distilled_model_used, :string

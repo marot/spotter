@@ -1004,6 +1004,7 @@ defmodule SpotterWeb.PaneListLive do
                       <th>Status</th>
                       <th>Branch</th>
                       <th>Messages</th>
+                      <th>Lines</th>
                       <th>Tools</th>
                       <th>Rework</th>
                       <th>Started</th>
@@ -1034,6 +1035,9 @@ defmodule SpotterWeb.PaneListLive do
                               <%= if Map.get(@expanded_subagents, session.id, false), do: "▼", else: "▶" %>
                             </span>
                           <% end %>
+                        </td>
+                        <td>
+                          <.line_stats session={session} />
                         </td>
                         <td>
                           <% stats = Map.get(@tool_call_stats_stats, session.id) %>
@@ -1078,6 +1082,7 @@ defmodule SpotterWeb.PaneListLive do
                           <td></td>
                           <td></td>
                           <td>{sa.message_count || 0}</td>
+                          <td></td>
                           <td></td>
                           <td></td>
                           <td>{relative_time(sa.started_at)}</td>
@@ -1128,6 +1133,7 @@ defmodule SpotterWeb.PaneListLive do
                           <th>Status</th>
                           <th>Branch</th>
                           <th>Messages</th>
+                          <th>Lines</th>
                           <th>Tools</th>
                           <th>Rework</th>
                           <th>Hidden</th>
@@ -1158,6 +1164,9 @@ defmodule SpotterWeb.PaneListLive do
                                   <%= if Map.get(@expanded_subagents, session.id, false), do: "▼", else: "▶" %>
                                 </span>
                               <% end %>
+                            </td>
+                            <td>
+                              <.line_stats session={session} />
                             </td>
                             <td>
                               <% stats = Map.get(@tool_call_stats_stats, session.id) %>
@@ -1191,6 +1200,7 @@ defmodule SpotterWeb.PaneListLive do
                               <td></td>
                               <td></td>
                               <td>{sa.message_count || 0}</td>
+                              <td></td>
                               <td></td>
                               <td></td>
                               <td>{relative_time(sa.started_at)}</td>
@@ -1288,6 +1298,21 @@ defmodule SpotterWeb.PaneListLive do
 
   defp session_status_badge(assigns) do
     ~H"""
+    """
+  end
+
+  defp line_stats(%{session: %{lines_added: added, lines_removed: removed}} = assigns)
+       when added > 0 or removed > 0 do
+    assigns = assign(assigns, added: added, removed: removed)
+
+    ~H"""
+    <span class="text-success">+{@added}</span> / <span class="text-error">-{@removed}</span>
+    """
+  end
+
+  defp line_stats(assigns) do
+    ~H"""
+    <span>—</span>
     """
   end
 end
