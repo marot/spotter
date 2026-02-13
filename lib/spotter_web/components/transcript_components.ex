@@ -123,7 +123,15 @@ defmodule SpotterWeb.TranscriptComponents do
             data-render-markdown={if markdown_line?(@line), do: "true", else: "false"}
           ><%= @line.line %></span>
         <% end %>
-        <span :if={@line[:token_count_total]} class="row-token-count">{@line[:token_count_total]} tok{format_token_delta(@line[:token_count_delta])}</span>
+        <span :if={has_row_meta?(@line)} class="row-meta">
+          <span :if={@line[:timestamp]} class={"row-timestamp #{if @line[:timestamp_delta_slow?], do: "is-slow", else: ""}"} title={DateTime.to_iso8601(@line[:timestamp])}>
+            {format_timestamp(@line[:timestamp])}{format_delta(@line[:timestamp_delta_seconds])}
+          </span>
+          <span :if={@line[:tool_duration_seconds]} class={"row-tool-duration #{if @line[:tool_duration_slow?], do: "is-slow", else: ""}"}>
+            tool {format_duration(@line[:tool_duration_seconds])}
+          </span>
+          <span :if={@line[:token_count_total]} class="row-token-count">{@line[:token_count_total]} tok{format_token_delta(@line[:token_count_delta])}</span>
+        </span>
       </div>
     </div>
     """
@@ -191,6 +199,30 @@ defmodule SpotterWeb.TranscriptComponents do
       _ -> nil
     end
   end
+
+  defp has_row_meta?(line) do
+    line[:timestamp] != nil || line[:tool_duration_seconds] != nil ||
+      line[:token_count_total] != nil
+  end
+
+  defp format_timestamp(%DateTime{} = dt) do
+    dt
+    |> DateTime.to_time()
+    |> Time.truncate(:second)
+    |> Time.to_string()
+  end
+
+  defp format_delta(nil), do: ""
+
+  defp format_delta(seconds) do
+    " (+" <> format_duration(seconds) <> ")"
+  end
+
+  defp format_duration(seconds) when seconds >= 60 do
+    "#{div(seconds, 60)}m#{rem(seconds, 60)}s"
+  end
+
+  defp format_duration(seconds), do: "#{seconds}s"
 
   defp format_token_delta(nil), do: ""
   defp format_token_delta(0), do: " (0)"

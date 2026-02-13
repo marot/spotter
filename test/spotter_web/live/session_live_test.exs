@@ -208,6 +208,83 @@ defmodule SpotterWeb.SessionLiveTest do
     end
   end
 
+  describe "timestamp and duration rendering" do
+    test "renders timestamp and delta for two messages", %{
+      session: session,
+      session_id: session_id
+    } do
+      create_message(session, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "first"}]},
+        timestamp: ~U[2026-02-13 10:00:00Z]
+      })
+
+      create_message(session, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "second"}]},
+        timestamp: ~U[2026-02-13 10:01:24Z]
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ "10:00:00"
+      assert html =~ "(+1m24s)"
+    end
+
+    test "slow delta has is-slow class", %{session: session, session_id: session_id} do
+      create_message(session, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "first"}]},
+        timestamp: ~U[2026-02-13 10:00:00Z]
+      })
+
+      create_message(session, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "second"}]},
+        timestamp: ~U[2026-02-13 10:02:00Z]
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ "is-slow"
+    end
+
+    test "tool duration rendered for tool_use with matching tool_result", %{
+      session: session,
+      session_id: session_id
+    } do
+      create_message(session, %{
+        content: %{
+          "blocks" => [
+            %{
+              "type" => "tool_use",
+              "name" => "Bash",
+              "id" => "toolu_ts",
+              "input" => %{"command" => "sleep 90"}
+            }
+          ]
+        },
+        timestamp: ~U[2026-02-13 10:00:00Z]
+      })
+
+      create_message(session, %{
+        type: :user,
+        role: :user,
+        content: %{
+          "blocks" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "toolu_ts",
+              "content" => "done"
+            }
+          ]
+        },
+        timestamp: ~U[2026-02-13 10:01:30Z]
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ "tool 1m30s"
+      assert html =~ "is-slow"
+    end
+  end
+
   describe "subagent rendering" do
     test "subagent rows detected by text pattern have is-subagent class and badge", %{
       session: session,

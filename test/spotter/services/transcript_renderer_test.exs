@@ -2626,6 +2626,226 @@ defmodule Spotter.Services.TranscriptRendererTest do
     end
   end
 
+  describe "timestamp metadata" do
+    test "timestamp only on first rendered line of a message" do
+      ts = ~U[2026-02-13 10:00:00Z]
+
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ts,
+          content: %{"blocks" => [%{"type" => "text", "text" => "first\nsecond"}]}
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      first = Enum.at(result, 0)
+      second = Enum.at(result, 1)
+
+      assert first.timestamp == ts
+      assert second.timestamp == nil
+    end
+
+    test "row-to-row delta computed correctly" do
+      ts1 = ~U[2026-02-13 10:00:00Z]
+      ts2 = ~U[2026-02-13 10:00:30Z]
+
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ts1,
+          content: %{"blocks" => [%{"type" => "text", "text" => "first"}]}
+        },
+        %{
+          type: :assistant,
+          uuid: "msg-2",
+          timestamp: ts2,
+          content: %{"blocks" => [%{"type" => "text", "text" => "second"}]}
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      first = Enum.find(result, &(&1.line == "first"))
+      second = Enum.find(result, &(&1.line == "second"))
+
+      assert first.timestamp_delta_seconds == nil
+      assert first.timestamp_delta_slow? == nil
+      assert second.timestamp_delta_seconds == 30
+      assert second.timestamp_delta_slow? == false
+    end
+
+    test "slow flag set when delta > 60" do
+      ts1 = ~U[2026-02-13 10:00:00Z]
+      ts2 = ~U[2026-02-13 10:02:00Z]
+
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ts1,
+          content: %{"blocks" => [%{"type" => "text", "text" => "first"}]}
+        },
+        %{
+          type: :assistant,
+          uuid: "msg-2",
+          timestamp: ts2,
+          content: %{"blocks" => [%{"type" => "text", "text" => "second"}]}
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      second = Enum.find(result, &(&1.line == "second"))
+
+      assert second.timestamp_delta_seconds == 120
+      assert second.timestamp_delta_slow? == true
+    end
+
+    test "missing timestamp treated as nil" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{"blocks" => [%{"type" => "text", "text" => "no timestamp"}]}
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.timestamp == nil
+      assert line.timestamp_delta_seconds == nil
+    end
+  end
+
+  describe "tool duration metadata" do
+    test "tool duration computed for tool_use with matching tool_result" do
+      ts1 = ~U[2026-02-13 10:00:00Z]
+      ts2 = ~U[2026-02-13 10:00:45Z]
+
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ts1,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_dur",
+                "input" => %{"command" => "sleep 45"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          timestamp: ts2,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_dur",
+                "content" => "done"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_use = Enum.find(result, &(&1.kind == :tool_use))
+
+      assert tool_use.tool_duration_seconds == 45
+      assert tool_use.tool_duration_slow? == false
+    end
+
+    test "tool duration slow flag when > 60s" do
+      ts1 = ~U[2026-02-13 10:00:00Z]
+      ts2 = ~U[2026-02-13 10:01:30Z]
+
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ts1,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_slow",
+                "input" => %{"command" => "sleep 90"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          timestamp: ts2,
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_slow",
+                "content" => "done"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_use = Enum.find(result, &(&1.kind == :tool_use))
+
+      assert tool_use.tool_duration_seconds == 90
+      assert tool_use.tool_duration_slow? == true
+    end
+
+    test "no tool duration when no matching tool_result" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ~U[2026-02-13 10:00:00Z],
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_orphan",
+                "input" => %{"command" => "echo hi"}
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_use = Enum.find(result, &(&1.kind == :tool_use))
+
+      assert tool_use.tool_duration_seconds == nil
+      assert tool_use.tool_duration_slow? == nil
+    end
+
+    test "non-tool_use lines have nil tool duration" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          timestamp: ~U[2026-02-13 10:00:00Z],
+          content: %{"blocks" => [%{"type" => "text", "text" => "Hello"}]}
+        }
+      ]
+
+      [line] = TranscriptRenderer.render(messages)
+      assert line.tool_duration_seconds == nil
+      assert line.tool_duration_slow? == nil
+    end
+  end
+
   defp load_fixture(name) do
     path = Path.join(@fixtures_dir, name)
     {:ok, %{messages: messages}} = JsonlParser.parse_session_file(path)

@@ -57,10 +57,12 @@ defmodule Spotter.Services.TranscriptRenderer do
     session_cwd = opts[:session_cwd]
     tool_use_index = build_tool_use_index(messages)
     tool_outcome_index = build_tool_outcome_index(messages)
+    tool_result_timestamp_index = build_tool_result_timestamp_index(messages)
 
     messages
     |> Enum.flat_map(fn msg ->
       usage = extract_usage(msg)
+      timestamp = extract_timestamp(msg)
 
       msg
       |> render_message_enriched(session_cwd, tool_use_index, tool_outcome_index)
@@ -71,11 +73,14 @@ defmodule Spotter.Services.TranscriptRenderer do
         |> Map.put(:type, msg[:type])
         |> put_subagent_ref(msg)
         |> put_token_usage(usage, line_idx)
+        |> put_timestamp(timestamp, line_idx)
+        |> put_tool_duration(timestamp, tool_result_timestamp_index)
         |> put_debug_payload(msg)
       end)
     end)
     |> annotate_tool_result_groups()
     |> annotate_token_deltas()
+    |> annotate_timestamp_deltas()
     |> Enum.with_index(1)
     |> Enum.map(fn {entry, idx} -> Map.put(entry, :line_number, idx) end)
   end
@@ -250,6 +255,94 @@ defmodule Spotter.Services.TranscriptRenderer do
 
   defp extract_usage(%{raw_payload: %{"message" => %{"usage" => %{} = usage}}}), do: usage
   defp extract_usage(_), do: nil
+
+  # ── Timestamp metadata ──────────────────────────────────────────
+
+  defp extract_timestamp(%{timestamp: %DateTime{} = ts}), do: ts
+  defp extract_timestamp(_), do: nil
+
+  defp put_timestamp(line_meta, nil, _line_idx) do
+    line_meta
+    |> Map.put(:timestamp, nil)
+    |> Map.put(:timestamp_delta_seconds, nil)
+    |> Map.put(:timestamp_delta_slow?, nil)
+  end
+
+  defp put_timestamp(line_meta, timestamp, 0) do
+    line_meta
+    |> Map.put(:timestamp, timestamp)
+    |> Map.put(:timestamp_delta_seconds, nil)
+    |> Map.put(:timestamp_delta_slow?, nil)
+  end
+
+  defp put_timestamp(line_meta, _timestamp, _line_idx) do
+    line_meta
+    |> Map.put(:timestamp, nil)
+    |> Map.put(:timestamp_delta_seconds, nil)
+    |> Map.put(:timestamp_delta_slow?, nil)
+  end
+
+  defp annotate_timestamp_deltas(lines) do
+    {annotated, _prev} =
+      Enum.map_reduce(lines, nil, fn
+        %{timestamp: nil} = line, prev_ts ->
+          {line, prev_ts}
+
+        %{timestamp: current_ts} = line, nil ->
+          {line, current_ts}
+
+        %{timestamp: current_ts} = line, prev_ts ->
+          delta = DateTime.diff(current_ts, prev_ts, :second)
+
+          line =
+            line
+            |> Map.put(:timestamp_delta_seconds, delta)
+            |> Map.put(:timestamp_delta_slow?, delta > 60)
+
+          {line, current_ts}
+      end)
+
+    annotated
+  end
+
+  # ── Tool duration metadata ──────────────────────────────────────
+
+  defp build_tool_result_timestamp_index(messages) do
+    messages
+    |> Enum.flat_map(fn
+      %{type: :user, timestamp: %DateTime{} = ts, content: %{"blocks" => blocks}}
+      when is_list(blocks) ->
+        blocks
+        |> Enum.filter(&(&1["type"] == "tool_result" && &1["tool_use_id"]))
+        |> Enum.map(fn block -> {block["tool_use_id"], ts} end)
+
+      _ ->
+        []
+    end)
+    |> Map.new()
+  end
+
+  defp put_tool_duration(line_meta, tool_use_ts, tool_result_ts_index) do
+    if line_meta[:kind] == :tool_use && line_meta[:tool_use_id] do
+      case {tool_use_ts, Map.get(tool_result_ts_index, line_meta.tool_use_id)} do
+        {%DateTime{} = use_ts, %DateTime{} = result_ts} ->
+          duration = DateTime.diff(result_ts, use_ts, :second)
+
+          line_meta
+          |> Map.put(:tool_duration_seconds, duration)
+          |> Map.put(:tool_duration_slow?, duration > 60)
+
+        _ ->
+          line_meta
+          |> Map.put(:tool_duration_seconds, nil)
+          |> Map.put(:tool_duration_slow?, nil)
+      end
+    else
+      line_meta
+      |> Map.put(:tool_duration_seconds, nil)
+      |> Map.put(:tool_duration_slow?, nil)
+    end
+  end
 
   defp put_token_usage(line_meta, nil, _line_idx) do
     line_meta

@@ -251,6 +251,68 @@ defmodule SpotterWeb.SubagentLiveTest do
     end
   end
 
+  describe "timestamp and duration rendering" do
+    test "renders timestamp and delta", %{
+      subagent: subagent,
+      session_id: session_id,
+      agent_id: agent_id
+    } do
+      create_message(subagent, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "first"}]},
+        timestamp: ~U[2026-02-13 10:00:00Z]
+      })
+
+      create_message(subagent, %{
+        content: %{"blocks" => [%{"type" => "text", "text" => "second"}]},
+        timestamp: ~U[2026-02-13 10:00:39Z]
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}/agents/#{agent_id}")
+
+      assert html =~ "10:00:00"
+      assert html =~ "(+39s)"
+    end
+
+    test "tool duration rendered for tool_use", %{
+      subagent: subagent,
+      session_id: session_id,
+      agent_id: agent_id
+    } do
+      create_message(subagent, %{
+        content: %{
+          "blocks" => [
+            %{
+              "type" => "tool_use",
+              "name" => "Bash",
+              "id" => "toolu_sub_dur",
+              "input" => %{"command" => "echo hi"}
+            }
+          ]
+        },
+        timestamp: ~U[2026-02-13 10:00:00Z]
+      })
+
+      create_message(subagent, %{
+        type: :user,
+        role: :user,
+        content: %{
+          "blocks" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "toolu_sub_dur",
+              "content" => "hi"
+            }
+          ]
+        },
+        timestamp: ~U[2026-02-13 10:00:12Z]
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}/agents/#{agent_id}")
+
+      assert html =~ "tool 12s"
+    end
+  end
+
   describe "empty state" do
     test "renders empty state when no messages", %{session_id: session_id, agent_id: agent_id} do
       {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}/agents/#{agent_id}")
