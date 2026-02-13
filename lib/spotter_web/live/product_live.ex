@@ -165,6 +165,11 @@ defmodule SpotterWeb.ProductLive do
                     <.commit_hash hash={req.updated_by_git_commit} cache={@commit_id_cache} />
                   </div>
                   <p :if={req.rationale} class="product-rationale">{req.rationale}</p>
+                  <.evidence_files
+                    :if={is_list(req[:evidence_files]) and req.evidence_files != []}
+                    files={req.evidence_files}
+                    project_id={@selected_project_id}
+                  />
                 </div>
               </div>
             </div>
@@ -174,6 +179,23 @@ defmodule SpotterWeb.ProductLive do
 
       <div :if={@dolt_available and @selected_project_id == nil} class="empty-state">
         <p>Select a project to view its product specification.</p>
+      </div>
+    </div>
+    """
+  end
+
+  defp evidence_files(assigns) do
+    ~H"""
+    <div class="product-evidence">
+      <span class="product-evidence-label">Evidence</span>
+      <div class="product-evidence-list">
+        <a
+          :for={path <- @files}
+          href={"/projects/#{@project_id}/files/#{path}"}
+          class="product-evidence-link"
+        >
+          <code>{path}</code>
+        </a>
       </div>
     </div>
     """

@@ -2030,3 +2030,35 @@ input::placeholder, textarea::placeholder {
 .product-requirement + .product-requirement {
   border-top: 1px solid var(--surface-2);
 }
+.product-evidence {
+  padding: var(--space-1) var(--space-4) var(--space-2) var(--space-8);
+}
+.product-evidence-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: var(--space-1);
+  display: block;
+}
+.product-evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.product-evidence-link {
+  text-decoration: none;
+}
+.product-evidence-link code {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  transition: background 0.1s, color 0.1s;
+}
+.product-evidence-link:hover code {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
