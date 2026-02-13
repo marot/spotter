@@ -5,6 +5,8 @@ defmodule Spotter.Services.CoChangeCalculator do
   require Ash.Query
   require OpenTelemetry.Tracer
 
+  @provenance_batch_size 200
+
   alias Spotter.Services.CoChangeIntersections
   alias Spotter.Services.GitLogReader
 
@@ -163,14 +165,27 @@ defmodule Spotter.Services.CoChangeCalculator do
   end
 
   defp upsert_group_commits(project_id, scope, group) do
-    Enum.each(group.matching_commits, fn mc ->
-      Ash.create!(CoChangeGroupCommit, %{
-        project_id: project_id,
-        scope: scope,
-        group_key: group.group_key,
-        commit_hash: mc.hash,
-        committed_at: mc.timestamp
-      })
+    attrs_list =
+      Enum.map(group.matching_commits, fn mc ->
+        %{
+          project_id: project_id,
+          scope: scope,
+          group_key: group.group_key,
+          commit_hash: mc.hash,
+          committed_at: mc.timestamp
+        }
+      end)
+
+    batches = Enum.chunk_every(attrs_list, @provenance_batch_size)
+
+    OpenTelemetry.Tracer.set_attributes(%{
+      matching_commit_count: length(attrs_list),
+      commit_upsert_batches: length(batches),
+      provenance_batch_size: @provenance_batch_size
+    })
+
+    Enum.each(batches, fn batch ->
+      Ash.bulk_create!(batch, CoChangeGroupCommit, :create)
     end)
   end
 
@@ -198,21 +213,35 @@ defmodule Spotter.Services.CoChangeCalculator do
           group_key: group.group_key,
           measured_commit_hash: measured_commit.hash
         } do
-        Enum.each(group.members, fn member_path ->
-          persist_single_member_stat(
-            project_id,
-            scope,
-            group.group_key,
-            member_path,
-            measured_commit,
-            repo_path
-          )
+        attrs_list =
+          group.members
+          |> Enum.flat_map(fn member_path ->
+            build_member_stat_attrs(
+              project_id,
+              scope,
+              group.group_key,
+              member_path,
+              measured_commit,
+              repo_path
+            )
+          end)
+
+        batches = Enum.chunk_every(attrs_list, @provenance_batch_size)
+
+        OpenTelemetry.Tracer.set_attributes(%{
+          member_count: length(group.members),
+          member_stat_upsert_batches: length(batches),
+          provenance_batch_size: @provenance_batch_size
+        })
+
+        Enum.each(batches, fn batch ->
+          Ash.bulk_create!(batch, CoChangeGroupMemberStat, :create)
         end)
       end
     end
   end
 
-  defp persist_single_member_stat(
+  defp build_member_stat_attrs(
          project_id,
          scope,
          group_key,
@@ -222,21 +251,25 @@ defmodule Spotter.Services.CoChangeCalculator do
        ) do
     {size_bytes, loc} = read_file_metrics(repo_path, measured_commit.hash, member_path)
 
-    Ash.create!(CoChangeGroupMemberStat, %{
-      project_id: project_id,
-      scope: scope,
-      group_key: group_key,
-      member_path: member_path,
-      size_bytes: size_bytes,
-      loc: loc,
-      measured_commit_hash: measured_commit.hash,
-      measured_at: measured_commit.timestamp
-    })
+    [
+      %{
+        project_id: project_id,
+        scope: scope,
+        group_key: group_key,
+        member_path: member_path,
+        size_bytes: size_bytes,
+        loc: loc,
+        measured_commit_hash: measured_commit.hash,
+        measured_at: measured_commit.timestamp
+      }
+    ]
   rescue
     e ->
       Logger.warning(
         "CoChangeCalculator: member stat failed for #{member_path} in group #{group_key}: #{Exception.message(e)}"
       )
+
+      []
   end
 
   defp delete_stale_member_stats(project_id, scope, group) do

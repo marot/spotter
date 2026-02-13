@@ -1,6 +1,9 @@
 defmodule Spotter.Services.CoChangeCalculatorTest do
   use ExUnit.Case, async: false
 
+  # Real git history can produce many groups; 60s default is too tight for two compute runs.
+  @moduletag timeout: 180_000
+
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Repo
   alias Spotter.Services.CoChangeCalculator
@@ -113,6 +116,87 @@ defmodule Spotter.Services.CoChangeCalculatorTest do
       # Same number of rows (upsert, no duplicates)
       assert length(commits_after_first) == length(commits_after_second)
       assert length(stats_after_first) == length(stats_after_second)
+    end
+
+    test "provenance writes are batched (fewer inserts than rows)" do
+      project = create_project("calc-batched")
+      create_session(project, cwd: File.cwd!())
+
+      # Attach telemetry handler to count INSERT statements per table
+      insert_counts = :counters.new(2, [:atomics])
+      # index 1 = co_change_group_commits inserts, index 2 = co_change_group_member_stats inserts
+      handler_id = "batch-insert-counter-#{System.unique_integer()}"
+
+      :telemetry.attach(
+        handler_id,
+        [:spotter, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          query = metadata[:query] || ""
+
+          if String.contains?(query, "INSERT") do
+            cond do
+              String.contains?(query, "co_change_group_commits") ->
+                :counters.add(insert_counts, 1, 1)
+
+              String.contains?(query, "co_change_group_member_stats") ->
+                :counters.add(insert_counts, 2, 1)
+
+              true ->
+                :ok
+            end
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert :ok = CoChangeCalculator.compute(project.id)
+
+      commit_inserts = :counters.get(insert_counts, 1)
+      stat_inserts = :counters.get(insert_counts, 2)
+
+      commit_rows =
+        CoChangeGroupCommit
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!()
+        |> length()
+
+      stat_rows =
+        CoChangeGroupMemberStat
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!()
+        |> length()
+
+      # When there are multiple rows, insert count must be strictly less than row count
+      # (proves batching, not one-insert-per-row)
+      if commit_rows > 1 do
+        assert commit_inserts < commit_rows,
+               "Expected fewer INSERT queries (#{commit_inserts}) than commit rows (#{commit_rows})"
+      end
+
+      if stat_rows > 1 do
+        assert stat_inserts < stat_rows,
+               "Expected fewer INSERT queries (#{stat_inserts}) than member stat rows (#{stat_rows})"
+      end
+
+      # Idempotency: second run should not increase row counts
+      assert :ok = CoChangeCalculator.compute(project.id)
+
+      commit_rows_after =
+        CoChangeGroupCommit
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!()
+        |> length()
+
+      stat_rows_after =
+        CoChangeGroupMemberStat
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!()
+        |> length()
+
+      assert commit_rows == commit_rows_after
+      assert stat_rows == stat_rows_after
     end
 
     test "deletes stale rows when repo is accessible" do
