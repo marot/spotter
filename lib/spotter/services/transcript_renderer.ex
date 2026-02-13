@@ -8,6 +8,7 @@ defmodule Spotter.Services.TranscriptRenderer do
 
   @default_visible_lines 10
   @subagent_pattern ~r/agent-[a-zA-Z0-9]+/
+  @noisy_success_pattern ~r/^The file .* has been updated successfully\.$/
 
   @extension_to_language %{
     ".ex" => "elixir",
@@ -539,7 +540,7 @@ defmodule Spotter.Services.TranscriptRenderer do
 
         [
           %{
-            line: "  ⎿  (empty)",
+            line: "(empty)",
             kind: :tool_result,
             tool_use_id: tool_use_id,
             thread_key: thread_key,
@@ -664,12 +665,18 @@ defmodule Spotter.Services.TranscriptRenderer do
     if not is_error and is_list(patches) and patches != [] do
       tool_use_id = block["tool_use_id"]
       file_path = resolve_diff_file_path(tool_use_id, tool_use_index, session_cwd)
-      success_lines = render_generic_tool_result(block, msg, session_cwd, tool_use_index)
-      diff_lines = render_diff_rows(patches, tool_use_id, file_path)
-      success_lines ++ diff_lines
+      render_diff_rows(patches, tool_use_id, file_path)
     else
-      render_generic_tool_result(block, msg, session_cwd, tool_use_index)
+      block
+      |> render_generic_tool_result(msg, session_cwd, tool_use_index)
+      |> filter_noisy_success_lines()
     end
+  end
+
+  defp filter_noisy_success_lines(lines) do
+    filtered = Enum.reject(lines, &Regex.match?(@noisy_success_pattern, &1.line))
+
+    if filtered == [], do: [], else: filtered
   end
 
   defp resolve_diff_file_path(nil, _tool_use_index, _session_cwd), do: nil
@@ -754,7 +761,7 @@ defmodule Spotter.Services.TranscriptRenderer do
       {render_mode, code_language} = classify_result_line(relativized, inferred_lang)
 
       %{
-        line: "  ⎿  #{line_without_number}",
+        line: line_without_number,
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
@@ -794,7 +801,7 @@ defmodule Spotter.Services.TranscriptRenderer do
       {render_mode, code_language} = classify_result_line(relativized, inferred_lang)
 
       %{
-        line: "  ⎿  #{line_without_number}",
+        line: line_without_number,
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
@@ -813,7 +820,7 @@ defmodule Spotter.Services.TranscriptRenderer do
 
     [
       %{
-        line: "  ⎿  (empty)",
+        line: "(empty)",
         kind: :tool_result,
         tool_use_id: tool_use_id,
         thread_key: thread_key,
@@ -1121,22 +1128,18 @@ defmodule Spotter.Services.TranscriptRenderer do
 
   defp render_user_block(%{"type" => "tool_result", "content" => content})
        when is_binary(content) do
-    content
-    |> String.split("\n")
-    |> Enum.map(&"  ⎿  #{&1}")
+    String.split(content, "\n")
   end
 
   defp render_user_block(%{"type" => "tool_result", "content" => content})
        when is_list(content) do
-    content
-    |> Enum.flat_map(fn
+    Enum.flat_map(content, fn
       %{"type" => "text", "text" => text} -> String.split(text, "\n")
       _ -> []
     end)
-    |> Enum.map(&"  ⎿  #{&1}")
   end
 
-  defp render_user_block(%{"type" => "tool_result"}), do: ["  ⎿  (empty)"]
+  defp render_user_block(%{"type" => "tool_result"}), do: ["(empty)"]
 
   defp render_user_block(%{"type" => "text", "text" => text}) do
     String.split(text, "\n")

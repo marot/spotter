@@ -83,7 +83,7 @@ defmodule Spotter.Services.TranscriptRendererTest do
       assert Enum.any?(lines, &(&1 =~ "Bash"))
     end
 
-    test "renders user tool_result with indent" do
+    test "renders user tool_result without ⎿ prefix" do
       msg = %{
         type: :user,
         content: %{
@@ -95,7 +95,8 @@ defmodule Spotter.Services.TranscriptRendererTest do
       }
 
       lines = TranscriptRenderer.render_message(msg)
-      assert Enum.any?(lines, &(&1 =~ "⎿"))
+      assert Enum.any?(lines, &(&1 =~ "ok"))
+      refute Enum.any?(lines, &(&1 =~ "⎿"))
     end
 
     test "renders user text input" do
@@ -1194,7 +1195,7 @@ defmodule Spotter.Services.TranscriptRendererTest do
         |> TranscriptRenderer.render(session_cwd: "/home/user/project")
         |> Enum.filter(&(&1.kind == :tool_result))
 
-      assert Enum.map(lines, & &1.line) == ["  ⎿  def foo do", "  ⎿  end"]
+      assert Enum.map(lines, & &1.line) == ["def foo do", "end"]
       assert Enum.map(lines, & &1.source_line_number) == [42, 43]
       assert Enum.all?(lines, &(&1.render_mode == :code))
       assert Enum.all?(lines, &(&1.code_language == "elixir"))
@@ -1222,7 +1223,7 @@ defmodule Spotter.Services.TranscriptRendererTest do
         |> TranscriptRenderer.render()
         |> Enum.filter(&(&1.kind == :tool_result))
 
-      assert Enum.map(lines, & &1.line) == ["  ⎿  line one", "  ⎿  line two"]
+      assert Enum.map(lines, & &1.line) == ["line one", "line two"]
       assert Enum.map(lines, & &1.source_line_number) == [9, 10]
     end
   end
@@ -2319,6 +2320,145 @@ defmodule Spotter.Services.TranscriptRendererTest do
       # No file headers, just hunk header + 2 content lines = 3
       assert length(diff_lines) == 3
       refute Enum.any?(diff_lines, &(&1.line =~ "---"))
+    end
+  end
+
+  describe "⎿ removal and boilerplate suppression" do
+    test "no rendered line contains the ⎿ character" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Bash",
+                "id" => "toolu_bash",
+                "input" => %{"command" => "ls"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_bash",
+                "content" => "file1.txt\nfile2.txt"
+              }
+            ]
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      refute Enum.any?(result, &(&1.line =~ "⎿"))
+    end
+
+    test "Write tool_result with only boilerplate success line renders no rows" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Write",
+                "id" => "toolu_write",
+                "input" => %{"file_path" => "/tmp/foo.ex", "content" => "defmodule Foo do\nend"}
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_write",
+                "content" => "The file /tmp/foo.ex has been updated successfully."
+              }
+            ]
+          },
+          raw_payload: %{}
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_result_lines = Enum.filter(result, &(&1.kind == :tool_result))
+
+      assert tool_result_lines == []
+    end
+
+    test "Edit with structuredPatch emits only diff rows, no generic success lines" do
+      messages = [
+        %{
+          type: :assistant,
+          uuid: "msg-1",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_use",
+                "name" => "Edit",
+                "id" => "toolu_edit",
+                "input" => %{
+                  "file_path" => "/tmp/app.ex",
+                  "old_string" => "old",
+                  "new_string" => "new"
+                }
+              }
+            ]
+          }
+        },
+        %{
+          type: :user,
+          uuid: "msg-2",
+          content: %{
+            "blocks" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "toolu_edit",
+                "content" => "The file /tmp/app.ex has been updated successfully."
+              }
+            ]
+          },
+          raw_payload: %{
+            "toolUseResult" => %{
+              "structuredPatch" => [
+                %{
+                  "oldStart" => 1,
+                  "oldLines" => 1,
+                  "newStart" => 1,
+                  "newLines" => 1,
+                  "lines" => ["-old", "+new"]
+                }
+              ]
+            }
+          }
+        }
+      ]
+
+      result = TranscriptRenderer.render(messages)
+      tool_result_lines = Enum.filter(result, &(&1.kind == :tool_result))
+
+      # All tool_result lines should be diff lines, none should be the success boilerplate
+      assert Enum.all?(tool_result_lines, &(&1.code_language == "diff"))
+      refute Enum.any?(tool_result_lines, &(&1.line =~ "has been updated successfully"))
+    end
+
+    test "no fixture transcript line contains ⎿" do
+      for fixture <- ["short.jsonl", "tool_heavy.jsonl", "subagent.jsonl"] do
+        messages = load_fixture(fixture)
+        result = TranscriptRenderer.render(messages)
+        refute Enum.any?(result, &(&1.line =~ "⎿")), "#{fixture}: found ⎿ in rendered line"
+      end
     end
   end
 
