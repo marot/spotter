@@ -1,0 +1,17 @@
+services:
+  dolt:
+    image: dolthub/dolt-sql-server:1.5.0
+    ports:
+      - "13306:3306"
+    volumes:
+      - spotter_dolt_data:/var/lib/dolt
+    environment:
+      DOLT_ROOT_PASSWORD: spotter
+      DOLT_ROOT_HOST: "%"
+      DOLT_DATABASE: spotter_product
+      DOLT_USER: spotter
+      DOLT_PASSWORD: spotter
+      DOLT_USER_HOST: "%"
+
+volumes:
+  spotter_dolt_data:

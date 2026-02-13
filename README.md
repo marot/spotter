@@ -69,6 +69,40 @@ LLM-powered features (hotspot scoring, waiting summary) use the Anthropic API vi
 - **Resolution order**: app config first, then system env fallback
 - **Fail-safe**: when the key is missing or blank, LLM features degrade gracefully (deterministic fallback summaries, scoring skipped) without crashing workers or making outbound API calls
 
+## Product Specification (Dolt)
+
+Spotter can maintain a rolling, versioned product specification derived from codebase changes. The spec is stored in a Dolt SQL-server (MySQL-compatible with Git-style versioning).
+
+### Setup
+
+Start the Dolt SQL-server:
+
+```bash
+docker compose -f docker-compose.dolt.yml up -d
+```
+
+Enable the feature and start Spotter:
+
+```bash
+export SPOTTER_PRODUCT_SPEC_ENABLED=true
+mix phx.server
+```
+
+The schema (domains, features, requirements) is created automatically on startup.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `SPOTTER_PRODUCT_SPEC_ENABLED` | `false` | Set to `true` to enable |
+| `SPOTTER_DOLT_HOST` | `localhost` | Dolt server hostname |
+| `SPOTTER_DOLT_PORT` | `13306` | Dolt server port |
+| `SPOTTER_DOLT_DATABASE` | `spotter_product` | Dolt database name |
+| `SPOTTER_DOLT_USERNAME` | `spotter` | Dolt username |
+| `SPOTTER_DOLT_PASSWORD` | `spotter` | Dolt password |
+
+Tests run without Dolt (feature is disabled by default in test config).
+
 ## Local E2E (Docker + Playwright + Live Claude)
 
 Spotter includes a local-only E2E harness that runs:

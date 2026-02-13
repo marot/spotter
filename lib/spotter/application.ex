@@ -14,25 +14,39 @@ defmodule Spotter.Application do
     Otel.setup()
     LiveviewOtel.setup()
 
-    children = [
-      {Phoenix.PubSub, name: Spotter.PubSub},
-      Spotter.Services.SessionRegistry,
-      Spotter.Services.ActiveSessionRegistry,
-      Spotter.Services.ReviewSessionRegistry,
-      Spotter.Services.ReviewTokenStore,
-      {Registry, keys: :unique, name: Spotter.Services.TranscriptTailRegistry},
-      Spotter.Services.TranscriptTailSupervisor,
-      Spotter.Repo,
-      {Oban,
-       AshOban.config(
-         Application.fetch_env!(:spotter, :ash_domains),
-         Application.fetch_env!(:spotter, Oban)
-       )},
-      SpotterWeb.Endpoint
-    ]
+    children =
+      [
+        {Phoenix.PubSub, name: Spotter.PubSub},
+        Spotter.Services.SessionRegistry,
+        Spotter.Services.ActiveSessionRegistry,
+        Spotter.Services.ReviewSessionRegistry,
+        Spotter.Services.ReviewTokenStore,
+        {Registry, keys: :unique, name: Spotter.Services.TranscriptTailRegistry},
+        Spotter.Services.TranscriptTailSupervisor,
+        Spotter.Repo,
+        {Oban,
+         AshOban.config(
+           Application.fetch_env!(:spotter, :ash_domains),
+           Application.fetch_env!(:spotter, Oban)
+         )},
+        SpotterWeb.Endpoint
+      ] ++ product_spec_children()
 
     opts = [strategy: :one_for_one, name: Spotter.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp product_spec_children do
+    alias Spotter.ProductSpec
+
+    if ProductSpec.Config.enabled?() do
+      [
+        {ProductSpec.Repo, []},
+        {Task, &ProductSpec.Schema.ensure_schema!/0}
+      ]
+    else
+      []
+    end
   end
 
   defp validate_anthropic_key! do
