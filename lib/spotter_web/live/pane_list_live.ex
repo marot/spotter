@@ -14,6 +14,7 @@ defmodule SpotterWeb.PaneListLive do
     ToolCall
   }
 
+  alias Spotter.Services.Tmux
   alias Spotter.Transcripts.Jobs.IngestRecentCommits
   alias SpotterWeb.IngestProgress
 
@@ -165,7 +166,7 @@ defmodule SpotterWeb.PaneListLive do
 
   def handle_event("review_session", %{"session-id" => session_id}, socket) do
     cwd = lookup_session_cwd(session_id)
-    Task.start(fn -> Spotter.Services.Tmux.launch_review_session(session_id, cwd: cwd) end)
+    Task.start(fn -> Tmux.launch_review_session(session_id, cwd: cwd) end)
     {:noreply, push_navigate(socket, to: "/sessions/#{session_id}")}
   end
 
