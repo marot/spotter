@@ -1,0 +1,204 @@
+defmodule Spotter.Transcripts.Jobs.ExplainAnnotation do
+  @moduledoc false
+
+  use Oban.Worker, queue: :default, max_attempts: 3, unique: [keys: [:annotation_id], period: 300]
+
+  alias Spotter.Services.AnnotationExplainPrompt
+
+  alias Spotter.Transcripts.{
+    Annotation,
+    Flashcard,
+    ReviewItem
+  }
+
+  require OpenTelemetry.Tracer, as: Tracer
+
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"annotation_id" => annotation_id}}) do
+    Tracer.with_span "spotter.annotations.explain.job",
+      attributes: %{annotation_id: annotation_id, model: "haiku"} do
+      run_explain(annotation_id)
+    end
+  end
+
+  defp run_explain(annotation_id) do
+    annotation =
+      Annotation
+      |> Ash.get!(annotation_id)
+      |> Ash.load!([:session, :file_refs, message_refs: :message])
+
+    update_explain_metadata(annotation, %{
+      "status" => "pending",
+      "started_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "model" => "haiku"
+    })
+
+    Tracer.set_attribute(:session_id, annotation.session_id)
+
+    case stream_explanation(annotation) do
+      {:ok, answer, references} ->
+        finalize_success(annotation, answer, references)
+
+      {:error, reason} ->
+        finalize_error(annotation, reason)
+    end
+
+    :ok
+  rescue
+    e ->
+      reason = Exception.message(e)
+      Tracer.set_status(:error, reason)
+
+      try do
+        annotation = Ash.get!(Annotation, annotation_id)
+        finalize_error(annotation, reason)
+      rescue
+        _ -> :ok
+      end
+
+      :ok
+  end
+
+  defp stream_explanation(annotation) do
+    Tracer.with_span "spotter.annotations.explain.agent_stream",
+      attributes: %{annotation_id: annotation.id} do
+      prompts = AnnotationExplainPrompt.build(annotation)
+      streaming_mod = streaming_module()
+
+      {:ok, session} =
+        streaming_mod.start_session(%ClaudeAgentSDK.Options{
+          model: "haiku",
+          system_prompt: prompts.system,
+          allowed_tools: ["WebSearch", "WebFetch"],
+          max_turns: 5
+        })
+
+      try do
+        answer =
+          streaming_mod.send_message(session, prompts.user)
+          |> Enum.reduce("", fn event, acc ->
+            case event do
+              %{type: :text_delta, text: chunk} ->
+                broadcast_delta(annotation.id, chunk)
+                acc <> chunk
+
+              %{type: :message_stop, final_text: final} when is_binary(final) ->
+                final
+
+              _ ->
+                acc
+            end
+          end)
+
+        references = parse_references(answer)
+        {:ok, answer, references}
+      rescue
+        e ->
+          {:error, Exception.message(e)}
+      after
+        streaming_mod.close_session(session)
+      end
+    end
+  end
+
+  defp finalize_success(annotation, answer, references) do
+    update_explain_metadata(annotation, %{
+      "status" => "complete",
+      "answer" => answer,
+      "references" => references,
+      "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
+    question = non_empty(annotation.comment)
+    project_id = annotation.session.project_id
+
+    flashcard =
+      Ash.create!(Flashcard, %{
+        project_id: project_id,
+        annotation_id: annotation.id,
+        question: question,
+        front_snippet: annotation.selected_text,
+        answer: answer,
+        references: %{"urls" => Enum.map(references, & &1["url"])}
+      })
+
+    Ash.create!(ReviewItem, %{
+      project_id: project_id,
+      target_kind: :flashcard,
+      flashcard_id: flashcard.id,
+      importance: :medium,
+      interval_days: 1,
+      next_due_on: Date.utc_today()
+    })
+
+    broadcast_done(annotation.id, answer, references)
+  end
+
+  defp finalize_error(annotation, reason) do
+    Tracer.set_status(:error, reason)
+
+    update_explain_metadata(annotation, %{
+      "status" => "error",
+      "error" => reason,
+      "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+
+    broadcast_error(annotation.id, reason)
+  end
+
+  defp update_explain_metadata(annotation, new_fields) do
+    existing = Map.get(annotation.metadata, "explain", %{})
+    merged = Map.merge(existing, new_fields)
+    metadata = Map.put(annotation.metadata, "explain", merged)
+    Ash.update!(annotation, %{metadata: metadata})
+  end
+
+  defp parse_references(text) do
+    case String.split(text, ~r/References:\s*\n/i) do
+      [_ | rest] when rest != [] ->
+        rest
+        |> List.last()
+        |> String.split("\n")
+        |> Enum.map(&String.trim/1)
+        |> Enum.filter(&String.starts_with?(&1, "- "))
+        |> Enum.map(fn line ->
+          url = line |> String.trim_leading("- ") |> String.trim()
+          %{"title" => nil, "url" => url}
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp broadcast_delta(annotation_id, chunk) do
+    Phoenix.PubSub.broadcast(
+      Spotter.PubSub,
+      "annotation_explain:#{annotation_id}",
+      {:annotation_explain_delta, annotation_id, chunk}
+    )
+  end
+
+  defp broadcast_done(annotation_id, final_text, references) do
+    Phoenix.PubSub.broadcast(
+      Spotter.PubSub,
+      "annotation_explain:#{annotation_id}",
+      {:annotation_explain_done, annotation_id, final_text, references}
+    )
+  end
+
+  defp broadcast_error(annotation_id, reason) do
+    Phoenix.PubSub.broadcast(
+      Spotter.PubSub,
+      "annotation_explain:#{annotation_id}",
+      {:annotation_explain_error, annotation_id, reason}
+    )
+  end
+
+  defp streaming_module do
+    Application.get_env(:spotter, :claude_streaming_module, ClaudeAgentSDK.Streaming)
+  end
+
+  defp non_empty(nil), do: nil
+  defp non_empty(s) when is_binary(s), do: if(String.trim(s) == "", do: nil, else: s)
+end

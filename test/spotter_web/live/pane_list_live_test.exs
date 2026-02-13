@@ -63,4 +63,13 @@ defmodule SpotterWeb.PaneListLiveTest do
       refute html =~ "No tmux panes found"
     end
   end
+
+  describe "study queue" do
+    test "always renders study queue with empty state when no items due", %{} do
+      {:ok, _view, html} = live(build_conn(), "/")
+
+      assert html =~ ~s(data-testid="study-queue")
+      assert html =~ "No items due today."
+    end
+  end
 end

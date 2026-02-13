@@ -213,6 +213,54 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
     end
   end
 
+  describe "explain annotations excluded" do
+    test "explain annotations do not appear in project review" do
+      {project, session} = create_project_with_session()
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "explain-hidden",
+        comment: "explain",
+        purpose: :explain
+      })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "review-visible",
+        comment: "review",
+        purpose: :review
+      })
+
+      {:ok, _view, html} = live(build_conn(), reviews_path(project))
+
+      assert html =~ "review-visible"
+      refute html =~ "explain-hidden"
+    end
+
+    test "close_review_session does not close explain annotations" do
+      {project, session} = create_project_with_session()
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "review me",
+        comment: "review",
+        purpose: :review
+      })
+
+      Ash.create!(Annotation, %{
+        session_id: session.id,
+        selected_text: "explain me",
+        comment: "explain",
+        purpose: :explain
+      })
+
+      {:ok, view, _html} = live(build_conn(), reviews_path(project))
+      html = render_click(view, "close_review_session")
+
+      assert html =~ "Closed 1 annotations"
+    end
+  end
+
   describe "open_conversation" do
     @table :review_session_registry
 

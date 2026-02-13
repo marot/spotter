@@ -706,7 +706,7 @@ defmodule SpotterWeb.PaneListLive do
       </div>
 
       <%!-- Study Queue Section --%>
-      <div :if={@study_queue_due_counts.total > 0} class="study-queue mb-4" data-testid="study-queue">
+      <div class="study-queue mb-4" data-testid="study-queue">
         <div class="page-header">
           <h2 class="section-heading">
             Study Queue
@@ -749,60 +749,64 @@ defmodule SpotterWeb.PaneListLive do
           </span>
         </div>
 
-        <div :for={entry <- @study_queue_due_items} class="study-card" data-testid="study-card">
-          <div class="study-card-header">
-            <span class={"badge study-kind-#{entry.item.target_kind}"}>
-              <%= if entry.item.target_kind == :commit_message, do: "Commit", else: "Hotspot" %>
-            </span>
-            <span class={"badge study-importance-#{entry.item.importance}"}>
-              {entry.item.importance}
-            </span>
-            <span :if={entry.item.seen_count > 0} class="text-muted text-xs">
-              seen {entry.item.seen_count}x
-            </span>
-          </div>
+        <%= if @study_queue_due_counts.total == 0 do %>
+          <div class="empty-state" data-testid="study-queue-empty">No items due today.</div>
+        <% else %>
+          <div :for={entry <- @study_queue_due_items} class="study-card" data-testid="study-card">
+            <div class="study-card-header">
+              <span class={"badge study-kind-#{entry.item.target_kind}"}>
+                <%= if entry.item.target_kind == :commit_message, do: "Commit", else: "Hotspot" %>
+              </span>
+              <span class={"badge study-importance-#{entry.item.importance}"}>
+                {entry.item.importance}
+              </span>
+              <span :if={entry.item.seen_count > 0} class="text-muted text-xs">
+                seen {entry.item.seen_count}x
+              </span>
+            </div>
 
-          <div class="study-card-body">
-            <%= if entry.item.target_kind == :commit_message and entry.commit do %>
-              <div class="study-commit-hash text-muted text-xs">
-                {String.slice(entry.commit.commit_hash, 0, 8)}
-              </div>
-              <div class="study-commit-subject">{entry.commit.subject}</div>
-              <div :if={entry.commit.body} class="study-commit-body text-sm text-muted">
-                {String.slice(entry.commit.body || "", 0, 200)}
-              </div>
-            <% end %>
+            <div class="study-card-body">
+              <%= if entry.item.target_kind == :commit_message and entry.commit do %>
+                <div class="study-commit-hash text-muted text-xs">
+                  {String.slice(entry.commit.commit_hash, 0, 8)}
+                </div>
+                <div class="study-commit-subject">{entry.commit.subject}</div>
+                <div :if={entry.commit.body} class="study-commit-body text-sm text-muted">
+                  {String.slice(entry.commit.body || "", 0, 200)}
+                </div>
+              <% end %>
 
-            <%= if entry.item.target_kind == :commit_hotspot and entry.hotspot do %>
-              <div class="study-hotspot-path text-muted text-xs">
-                {entry.hotspot.relative_path}:{entry.hotspot.line_start}-{entry.hotspot.line_end}
-                <%= if entry.hotspot.symbol_name do %>
-                  ({entry.hotspot.symbol_name})
-                <% end %>
-              </div>
-              <div class="study-hotspot-reason">{entry.hotspot.reason}</div>
-              <div class="study-hotspot-score">
-                Score: {entry.hotspot.overall_score}
-              </div>
-            <% end %>
-          </div>
+              <%= if entry.item.target_kind == :commit_hotspot and entry.hotspot do %>
+                <div class="study-hotspot-path text-muted text-xs">
+                  {entry.hotspot.relative_path}:{entry.hotspot.line_start}-{entry.hotspot.line_end}
+                  <%= if entry.hotspot.symbol_name do %>
+                    ({entry.hotspot.symbol_name})
+                  <% end %>
+                </div>
+                <div class="study-hotspot-reason">{entry.hotspot.reason}</div>
+                <div class="study-hotspot-score">
+                  Score: {entry.hotspot.overall_score}
+                </div>
+              <% end %>
+            </div>
 
-          <div class="study-card-actions">
-            <select
-              phx-change="set_importance"
-              phx-value-id={entry.item.id}
-              name="importance"
-              class="importance-select"
-            >
-              <option value="high" selected={entry.item.importance == :high}>High</option>
-              <option value="medium" selected={entry.item.importance == :medium}>Medium</option>
-              <option value="low" selected={entry.item.importance == :low}>Low</option>
-            </select>
-            <button class="btn btn-success" phx-click="mark_seen" phx-value-id={entry.item.id}>
-              Mark seen
-            </button>
+            <div class="study-card-actions">
+              <select
+                phx-change="set_importance"
+                phx-value-id={entry.item.id}
+                name="importance"
+                class="importance-select"
+              >
+                <option value="high" selected={entry.item.importance == :high}>High</option>
+                <option value="medium" selected={entry.item.importance == :medium}>Medium</option>
+                <option value="low" selected={entry.item.importance == :low}>Low</option>
+              </select>
+              <button class="btn btn-success" phx-click="mark_seen" phx-value-id={entry.item.id}>
+                Mark seen
+              </button>
+            </div>
           </div>
-        </div>
+        <% end %>
       </div>
 
       <%!-- Prompt Patterns Section --%>

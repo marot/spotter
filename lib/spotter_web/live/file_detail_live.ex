@@ -5,7 +5,7 @@ defmodule SpotterWeb.FileDetailLive do
   import SpotterWeb.TranscriptComponents
   import SpotterWeb.AnnotationComponents
 
-  alias Spotter.Services.FileDetail
+  alias Spotter.Services.{ExplainAnnotations, FileDetail}
   alias Spotter.Transcripts.{Annotation, AnnotationFileRef}
 
   attach_computer(SpotterWeb.Live.FileDetailComputers, :file_detail)
@@ -19,7 +19,8 @@ defmodule SpotterWeb.FileDetailLive do
       |> assign(
         selected_text: nil,
         selection_line_start: nil,
-        selection_line_end: nil
+        selection_line_end: nil,
+        explain_streams: %{}
       )
       |> mount_computers(%{
         file_detail: %{project_id: project_id, relative_path: relative_path}
@@ -56,19 +57,23 @@ defmodule SpotterWeb.FileDetailLive do
      )}
   end
 
-  def handle_event("save_annotation", %{"comment" => comment}, socket) do
+  def handle_event("save_annotation", params, socket) do
+    comment = params["comment"] || ""
+    purpose = if params["purpose"] == "explain", do: :explain, else: :review
     session_id = find_session_id(socket)
 
-    params = %{
+    create_params = %{
       session_id: session_id,
       source: :file,
       selected_text: socket.assigns.selected_text,
-      comment: comment
+      comment: comment,
+      purpose: purpose
     }
 
-    case Ash.create(Annotation, params) do
+    case Ash.create(Annotation, create_params) do
       {:ok, annotation} ->
         create_file_ref(annotation, socket)
+        socket = maybe_enqueue_explain(socket, annotation, purpose)
 
         {:noreply,
          socket
@@ -109,6 +114,37 @@ defmodule SpotterWeb.FileDetailLive do
   def handle_event("transcript_view_toggle_tool_result_group", _params, socket) do
     {:noreply, socket}
   end
+
+  @impl true
+  def handle_info({:annotation_explain_delta, id, chunk}, socket) do
+    streams = socket.assigns.explain_streams
+    current = Map.get(streams, id, "")
+    {:noreply, assign(socket, explain_streams: Map.put(streams, id, current <> chunk))}
+  end
+
+  def handle_info({:annotation_explain_done, _id, _final, _refs}, socket) do
+    {:noreply, socket |> assign(explain_streams: %{}) |> refresh_annotations()}
+  end
+
+  def handle_info({:annotation_explain_error, _id, _reason}, socket) do
+    {:noreply, socket |> assign(explain_streams: %{}) |> refresh_annotations()}
+  end
+
+  defp maybe_enqueue_explain(socket, annotation, :explain) do
+    ExplainAnnotations.enqueue(annotation.id)
+
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(
+        Spotter.PubSub,
+        ExplainAnnotations.topic(annotation.id)
+      )
+    end
+
+    streams = Map.put(socket.assigns.explain_streams, annotation.id, "")
+    assign(socket, explain_streams: streams)
+  end
+
+  defp maybe_enqueue_explain(socket, _annotation, _purpose), do: socket
 
   defp find_session_id(socket) do
     case socket.assigns.file_detail_linked_sessions do
@@ -344,6 +380,7 @@ defmodule SpotterWeb.FileDetailLive do
 
               <.annotation_cards
                 annotations={@file_detail_annotation_rows}
+                explain_streams={@explain_streams}
                 highlight_event="highlight_annotation"
                 delete_event="delete_annotation"
               />
