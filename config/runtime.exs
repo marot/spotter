@@ -23,7 +23,7 @@ config :langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY")
 # Product Spec (Dolt) configuration
 config :spotter, Spotter.ProductSpec.Repo,
   hostname: System.get_env("SPOTTER_DOLT_HOST", "localhost"),
-  port: String.to_integer(System.get_env("SPOTTER_DOLT_PORT", "13306")),
+  port: String.to_integer(System.get_env("SPOTTER_DOLT_PORT", "13307")),
   database: System.get_env("SPOTTER_DOLT_DATABASE", "spotter_product"),
   username: System.get_env("SPOTTER_DOLT_USERNAME", "spotter"),
   password: System.get_env("SPOTTER_DOLT_PASSWORD", "spotter"),

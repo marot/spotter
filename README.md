@@ -90,7 +90,7 @@ If Dolt is unavailable, the app boots normally — product spec features are sim
 | Variable | Default | Description |
 |---|---|---|
 | `SPOTTER_DOLT_HOST` | `localhost` | Dolt server hostname |
-| `SPOTTER_DOLT_PORT` | `13306` | Dolt server port |
+| `SPOTTER_DOLT_PORT` | `13307` | Dolt server port |
 | `SPOTTER_DOLT_DATABASE` | `spotter_product` | Dolt database name |
 | `SPOTTER_DOLT_USERNAME` | `spotter` | Dolt username |
 | `SPOTTER_DOLT_PASSWORD` | `spotter` | Dolt password |
