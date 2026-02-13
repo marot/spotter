@@ -1760,3 +1760,94 @@ input::placeholder, textarea::placeholder {
 .hljs-strong {
   font-weight: bold;
 }
+
+/* --- Study Queue --- */
+.study-queue {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  background: var(--surface-1);
+}
+
+.importance-summary {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.study-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+  background: var(--surface-2);
+}
+
+.study-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.study-card-body {
+  margin-bottom: var(--space-2);
+}
+
+.study-commit-subject {
+  font-weight: 500;
+}
+
+.study-commit-body {
+  white-space: pre-wrap;
+  max-height: 4em;
+  overflow: hidden;
+}
+
+.study-hotspot-reason {
+  font-weight: 500;
+}
+
+.study-hotspot-score {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.study-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.importance-select {
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85em;
+}
+
+.badge.study-kind-commit_message {
+  background: var(--accent-blue);
+  color: var(--surface-0);
+}
+
+.badge.study-kind-commit_hotspot {
+  background: var(--accent-amber);
+  color: var(--surface-0);
+}
+
+.badge.study-importance-high {
+  background: var(--accent-red);
+  color: var(--surface-0);
+}
+
+.badge.study-importance-medium {
+  background: var(--accent-amber);
+  color: var(--surface-0);
+}
+
+.badge.study-importance-low {
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}

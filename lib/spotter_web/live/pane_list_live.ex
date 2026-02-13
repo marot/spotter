@@ -2,12 +2,52 @@ defmodule SpotterWeb.PaneListLive do
   use Phoenix.LiveView
   use AshComputer.LiveView
 
-  alias Spotter.Transcripts.{Session, SessionPresenter, SessionRework, Subagent, ToolCall}
+  alias Spotter.Transcripts.{
+    Commit,
+    CommitHotspot,
+    ProjectIngestState,
+    ReviewItem,
+    Session,
+    SessionPresenter,
+    SessionRework,
+    Subagent,
+    ToolCall
+  }
+
+  alias Spotter.Transcripts.Jobs.IngestRecentCommits
   alias SpotterWeb.IngestProgress
 
   require Ash.Query
 
   @sessions_per_page 20
+
+  computer :study_queue do
+    input :study_scope do
+      initial "all"
+    end
+
+    input :study_project_id do
+      initial nil
+    end
+
+    val :due_items do
+      compute(fn %{study_scope: scope, study_project_id: project_id} ->
+        load_due_items(scope, project_id)
+      end)
+    end
+
+    val :due_counts do
+      compute(fn %{study_scope: _scope, study_project_id: project_id} ->
+        count_due_items(project_id)
+      end)
+    end
+
+    event :set_study_scope do
+      handle(fn _values, %{"scope" => scope} ->
+        %{study_scope: scope}
+      end)
+    end
+  end
 
   computer :project_filter do
     input :selected_project_id do
@@ -103,20 +143,24 @@ defmodule SpotterWeb.PaneListLive do
       Phoenix.PubSub.subscribe(Spotter.PubSub, "session_activity")
     end
 
-    {:ok,
-     socket
-     |> assign(active_status_map: %{})
-     |> IngestProgress.init_ingest()
-     |> assign(hidden_expanded: %{})
-     |> assign(expanded_subagents: %{})
-     |> assign(subagents_by_session: %{})
-     |> mount_computers()
-     |> load_session_data()}
+    socket =
+      socket
+      |> assign(active_status_map: %{})
+      |> IngestProgress.init_ingest()
+      |> assign(hidden_expanded: %{})
+      |> assign(expanded_subagents: %{})
+      |> assign(subagents_by_session: %{})
+      |> mount_computers()
+      |> load_session_data()
+
+    if connected?(socket), do: maybe_enqueue_commit_ingest(socket)
+
+    {:ok, socket}
   end
 
   @impl true
   def handle_event("refresh", _params, socket) do
-    {:noreply, load_session_data(socket)}
+    {:noreply, socket |> load_session_data() |> refresh_study_queue()}
   end
 
   def handle_event("review_session", %{"session-id" => session_id}, socket) do
@@ -162,6 +206,34 @@ defmodule SpotterWeb.PaneListLive do
     {:noreply, IngestProgress.start_ingest(socket)}
   end
 
+  def handle_event("mark_seen", %{"id" => id}, socket) do
+    item = Ash.get!(ReviewItem, id)
+    new_interval = advance_interval(item.importance, item.interval_days || 4)
+
+    Ash.update!(item, %{}, action: :mark_seen)
+
+    Ash.update!(item, %{
+      interval_days: new_interval,
+      next_due_on: Date.add(Date.utc_today(), new_interval)
+    })
+
+    {:noreply, refresh_study_queue(socket)}
+  end
+
+  def handle_event("set_importance", %{"id" => id, "importance" => importance}, socket) do
+    item = Ash.get!(ReviewItem, id)
+    importance_atom = String.to_existing_atom(importance)
+    {interval, offset} = schedule_for_importance(importance_atom)
+
+    Ash.update!(item, %{
+      importance: importance_atom,
+      interval_days: interval,
+      next_due_on: Date.add(Date.utc_today(), offset)
+    })
+
+    {:noreply, refresh_study_queue(socket)}
+  end
+
   @impl true
   def handle_info({:session_activity, %{session_id: session_id, status: status}}, socket) do
     active_status_map = Map.put(socket.assigns.active_status_map, session_id, status)
@@ -184,6 +256,143 @@ defmodule SpotterWeb.PaneListLive do
       :ignore ->
         {:noreply, socket}
     end
+  end
+
+  @ingest_cooldown_seconds 600
+
+  defp maybe_enqueue_commit_ingest(socket) do
+    projects = socket.assigns.session_data_projects
+    selected = socket.assigns.project_filter_selected_project_id
+
+    project_ids =
+      if selected do
+        [selected]
+      else
+        Enum.map(projects, & &1.id)
+      end
+
+    Enum.each(project_ids, fn pid ->
+      if should_enqueue_ingest?(pid) do
+        Ash.create(ProjectIngestState, %{
+          project_id: pid,
+          last_commit_ingest_at: DateTime.utc_now()
+        })
+
+        %{project_id: pid}
+        |> IngestRecentCommits.new()
+        |> Oban.insert()
+      end
+    end)
+  end
+
+  defp should_enqueue_ingest?(project_id) do
+    case ProjectIngestState
+         |> Ash.Query.filter(project_id == ^project_id)
+         |> Ash.read_one() do
+      {:ok, nil} ->
+        true
+
+      {:ok, %{last_commit_ingest_at: nil}} ->
+        true
+
+      {:ok, %{last_commit_ingest_at: last}} ->
+        DateTime.diff(DateTime.utc_now(), last, :second) >= @ingest_cooldown_seconds
+
+      _ ->
+        true
+    end
+  end
+
+  defp advance_interval(:high, _current), do: 1
+  defp advance_interval(_importance, current), do: (current || 4) * 2
+
+  defp schedule_for_importance(:high), do: {1, 1}
+  defp schedule_for_importance(:medium), do: {4, 4}
+  defp schedule_for_importance(:low), do: {14, 14}
+
+  defp refresh_study_queue(socket) do
+    project_id = socket.assigns.project_filter_selected_project_id
+    update_computer_inputs(socket, :study_queue, %{study_project_id: project_id})
+  end
+
+  defp load_due_items(scope, project_id) do
+    today = Date.utc_today()
+
+    query =
+      ReviewItem
+      |> Ash.Query.filter(is_nil(suspended_at))
+      |> Ash.Query.filter(is_nil(next_due_on) or next_due_on <= ^today)
+      |> Ash.Query.sort(inserted_at: :desc)
+      |> Ash.Query.limit(20)
+
+    query = if project_id, do: Ash.Query.filter(query, project_id == ^project_id), else: query
+
+    query =
+      case scope do
+        "messages" -> Ash.Query.filter(query, target_kind == :commit_message)
+        "hotspots" -> Ash.Query.filter(query, target_kind == :commit_hotspot)
+        _ -> query
+      end
+
+    items = Ash.read!(query)
+    enrich_review_items(items)
+  rescue
+    _ -> []
+  end
+
+  defp enrich_review_items(items) do
+    commit_ids = items |> Enum.map(& &1.commit_id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    hotspot_ids =
+      items |> Enum.map(& &1.commit_hotspot_id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    commits =
+      if commit_ids != [] do
+        Commit |> Ash.Query.filter(id in ^commit_ids) |> Ash.read!() |> Map.new(&{&1.id, &1})
+      else
+        %{}
+      end
+
+    hotspots =
+      if hotspot_ids != [] do
+        CommitHotspot
+        |> Ash.Query.filter(id in ^hotspot_ids)
+        |> Ash.read!()
+        |> Map.new(&{&1.id, &1})
+      else
+        %{}
+      end
+
+    Enum.map(items, fn item ->
+      %{
+        item: item,
+        commit: Map.get(commits, item.commit_id),
+        hotspot: Map.get(hotspots, item.commit_hotspot_id)
+      }
+    end)
+  end
+
+  defp count_due_items(project_id) do
+    today = Date.utc_today()
+
+    base =
+      ReviewItem
+      |> Ash.Query.filter(is_nil(suspended_at))
+      |> Ash.Query.filter(is_nil(next_due_on) or next_due_on <= ^today)
+
+    base = if project_id, do: Ash.Query.filter(base, project_id == ^project_id), else: base
+    items = Ash.read!(base)
+
+    %{
+      total: length(items),
+      messages: Enum.count(items, &(&1.target_kind == :commit_message)),
+      hotspots: Enum.count(items, &(&1.target_kind == :commit_hotspot)),
+      high: Enum.count(items, &(&1.importance == :high)),
+      medium: Enum.count(items, &(&1.importance == :medium)),
+      low: Enum.count(items, &(&1.importance == :low))
+    }
+  rescue
+    _ -> %{total: 0, messages: 0, hotspots: 0, high: 0, medium: 0, low: 0}
   end
 
   defp lookup_session_cwd(session_id) do
@@ -324,6 +533,106 @@ defmodule SpotterWeb.PaneListLive do
         <h1>Dashboard</h1>
         <div class="page-header-actions">
           <button class="btn" phx-click="refresh">Refresh</button>
+        </div>
+      </div>
+
+      <%!-- Study Queue Section --%>
+      <div :if={@study_queue_due_counts.total > 0} class="study-queue mb-4" data-testid="study-queue">
+        <div class="page-header">
+          <h2 class="section-heading">
+            Study Queue
+            <span class="text-muted text-sm">Due: {@study_queue_due_counts.total}</span>
+          </h2>
+          <div class="filter-bar">
+            <button
+              phx-click={event(:study_queue, :set_study_scope)}
+              phx-value-scope="all"
+              class={"filter-btn#{if @study_queue_study_scope == "all", do: " is-active"}"}
+            >
+              All ({@study_queue_due_counts.total})
+            </button>
+            <button
+              phx-click={event(:study_queue, :set_study_scope)}
+              phx-value-scope="messages"
+              class={"filter-btn#{if @study_queue_study_scope == "messages", do: " is-active"}"}
+            >
+              Messages ({@study_queue_due_counts.messages})
+            </button>
+            <button
+              phx-click={event(:study_queue, :set_study_scope)}
+              phx-value-scope="hotspots"
+              class={"filter-btn#{if @study_queue_study_scope == "hotspots", do: " is-active"}"}
+            >
+              Hotspots ({@study_queue_due_counts.hotspots})
+            </button>
+          </div>
+        </div>
+
+        <div class="importance-summary text-sm text-muted mb-2">
+          <span :if={@study_queue_due_counts.high > 0} class="text-error">
+            {@study_queue_due_counts.high} high
+          </span>
+          <span :if={@study_queue_due_counts.medium > 0}>
+            {@study_queue_due_counts.medium} medium
+          </span>
+          <span :if={@study_queue_due_counts.low > 0}>
+            {@study_queue_due_counts.low} low
+          </span>
+        </div>
+
+        <div :for={entry <- @study_queue_due_items} class="study-card" data-testid="study-card">
+          <div class="study-card-header">
+            <span class={"badge study-kind-#{entry.item.target_kind}"}>
+              <%= if entry.item.target_kind == :commit_message, do: "Commit", else: "Hotspot" %>
+            </span>
+            <span class={"badge study-importance-#{entry.item.importance}"}>
+              {entry.item.importance}
+            </span>
+            <span :if={entry.item.seen_count > 0} class="text-muted text-xs">
+              seen {entry.item.seen_count}x
+            </span>
+          </div>
+
+          <div class="study-card-body">
+            <%= if entry.item.target_kind == :commit_message and entry.commit do %>
+              <div class="study-commit-hash text-muted text-xs">
+                {String.slice(entry.commit.commit_hash, 0, 8)}
+              </div>
+              <div class="study-commit-subject">{entry.commit.subject}</div>
+              <div :if={entry.commit.body} class="study-commit-body text-sm text-muted">
+                {String.slice(entry.commit.body || "", 0, 200)}
+              </div>
+            <% end %>
+
+            <%= if entry.item.target_kind == :commit_hotspot and entry.hotspot do %>
+              <div class="study-hotspot-path text-muted text-xs">
+                {entry.hotspot.relative_path}:{entry.hotspot.line_start}-{entry.hotspot.line_end}
+                <%= if entry.hotspot.symbol_name do %>
+                  ({entry.hotspot.symbol_name})
+                <% end %>
+              </div>
+              <div class="study-hotspot-reason">{entry.hotspot.reason}</div>
+              <div class="study-hotspot-score">
+                Score: {entry.hotspot.overall_score}
+              </div>
+            <% end %>
+          </div>
+
+          <div class="study-card-actions">
+            <select
+              phx-change="set_importance"
+              phx-value-id={entry.item.id}
+              name="importance"
+              class="importance-select"
+            >
+              <option value="high" selected={entry.item.importance == :high}>High</option>
+              <option value="medium" selected={entry.item.importance == :medium}>Medium</option>
+              <option value="low" selected={entry.item.importance == :low}>Low</option>
+            </select>
+            <button class="btn btn-success" phx-click="mark_seen" phx-value-id={entry.item.id}>
+              Mark seen
+            </button>
+          </div>
         </div>
       </div>
 

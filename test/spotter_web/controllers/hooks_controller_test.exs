@@ -154,7 +154,7 @@ defmodule SpotterWeb.HooksControllerTest do
   end
 
   describe "POST /api/hooks/commit-event" do
-    test "ingests commits with valid params", %{session: session} do
+    test "ingests commits and enqueues analyze job", %{session: session} do
       hash = String.duplicate("a", 40)
 
       {status, body, _conn} =
@@ -177,6 +177,16 @@ defmodule SpotterWeb.HooksControllerTest do
       assert [link] = Ash.read!(SessionCommitLink)
       assert link.link_type == :observed_in_session
       assert link.confidence == 1.0
+
+      # Verify AnalyzeCommitHotspots job was enqueued
+      import Ecto.Query
+
+      assert [_job] =
+               Spotter.Repo.all(
+                 from(j in Oban.Job,
+                   where: j.worker == "Spotter.Transcripts.Jobs.AnalyzeCommitHotspots"
+                 )
+               )
     end
 
     test "handles empty hashes array", %{session: session} do

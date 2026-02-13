@@ -31,7 +31,12 @@ defmodule Spotter.Transcripts.Commit do
         :authored_at,
         :committed_at,
         :patch_id_stable,
-        :changed_files
+        :changed_files,
+        :hotspots_status,
+        :hotspots_analyzed_at,
+        :hotspots_error,
+        :hotspots_version,
+        :hotspots_metadata
       ]
     end
 
@@ -72,6 +77,21 @@ defmodule Spotter.Transcripts.Commit do
     attribute :committed_at, :utc_datetime_usec
     attribute :patch_id_stable, :string
     attribute :changed_files, {:array, :string}, allow_nil?: false, default: []
+
+    attribute :hotspots_status, :atom do
+      allow_nil? false
+      default :pending
+      constraints one_of: [:pending, :ok, :error]
+    end
+
+    attribute :hotspots_analyzed_at, :utc_datetime_usec
+    attribute :hotspots_error, :string
+    attribute :hotspots_version, :integer, allow_nil?: false, default: 1
+
+    attribute :hotspots_metadata, :map do
+      allow_nil? false
+      default %{}
+    end
 
     create_timestamp :inserted_at
     update_timestamp :updated_at

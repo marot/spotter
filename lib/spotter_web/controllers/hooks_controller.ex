@@ -5,6 +5,7 @@ defmodule SpotterWeb.HooksController do
   alias Spotter.Services.ActiveSessionRegistry
   alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
+  alias Spotter.Transcripts.Jobs.AnalyzeCommitHotspots
   alias Spotter.Transcripts.Jobs.ComputeCoChange
   alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.Jobs.EnrichCommits
@@ -39,6 +40,7 @@ defmodule SpotterWeb.HooksController do
         ingested = ingest_commits(hashes, session, params["git_branch"], evidence)
         enqueue_enrichment(hashes, session)
         enqueue_heatmap(session)
+        enqueue_analyze_hotspots(hashes, session)
 
         conn
         |> put_status(:created)
@@ -207,6 +209,16 @@ defmodule SpotterWeb.HooksController do
     |> ComputeCoChange.new()
     |> Oban.insert()
   end
+
+  defp enqueue_analyze_hotspots(hashes, session) when hashes != [] do
+    Enum.each(hashes, fn hash ->
+      %{project_id: session.project_id, commit_hash: hash}
+      |> AnalyzeCommitHotspots.new()
+      |> Oban.insert()
+    end)
+  end
+
+  defp enqueue_analyze_hotspots(_, _), do: :ok
 
   defp enqueue_enrichment(hashes, session) when hashes != [] do
     args =
