@@ -47,7 +47,7 @@ defmodule Spotter.Application do
 
         This key is needed for:
           - Waiting overlay summaries (Spotter.Services.WaitingSummary)
-          - AI hotspot scoring (Spotter.Services.HotspotScorer)
+          - Commit hotspot analysis (Spotter.Services.CommitHotspotAgent)
 
         Export the key before starting the server:
 

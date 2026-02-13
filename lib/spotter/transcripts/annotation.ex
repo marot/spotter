@@ -25,7 +25,14 @@ defmodule Spotter.Transcripts.Annotation do
         :end_col,
         :comment,
         :source,
-        :state
+        :state,
+        :relative_path,
+        :line_start,
+        :line_end,
+        :metadata,
+        :project_id,
+        :commit_id,
+        :commit_hotspot_id
       ]
     end
 
@@ -46,7 +53,16 @@ defmodule Spotter.Transcripts.Annotation do
     attribute :source, :atom do
       allow_nil? false
       default :terminal
-      constraints one_of: [:terminal, :transcript, :file]
+      constraints one_of: [:terminal, :transcript, :file, :commit_message, :code]
+    end
+
+    attribute :relative_path, :string
+    attribute :line_start, :integer
+    attribute :line_end, :integer
+
+    attribute :metadata, :map do
+      allow_nil? false
+      default %{}
     end
 
     attribute :selected_text, :string, allow_nil?: false
@@ -72,6 +88,18 @@ defmodule Spotter.Transcripts.Annotation do
     end
 
     belongs_to :subagent, Spotter.Transcripts.Subagent do
+      allow_nil? true
+    end
+
+    belongs_to :project, Spotter.Transcripts.Project do
+      allow_nil? true
+    end
+
+    belongs_to :commit, Spotter.Transcripts.Commit do
+      allow_nil? true
+    end
+
+    belongs_to :commit_hotspot, Spotter.Transcripts.CommitHotspot do
       allow_nil? true
     end
 

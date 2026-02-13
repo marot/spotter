@@ -6,10 +6,12 @@ defmodule SpotterWeb.SessionHookController do
   alias Spotter.Services.SessionRegistry
   alias Spotter.Services.TranscriptTailSupervisor
   alias Spotter.Services.WaitingSummary
+  alias Spotter.Transcripts.Jobs.IngestRecentCommits
   alias Spotter.Transcripts.Jobs.SyncTranscripts
   alias Spotter.Transcripts.Sessions
   alias SpotterWeb.OtelTraceHelpers
 
+  require Ash.Query
   require Logger
   require SpotterWeb.OtelTraceHelpers
 
@@ -30,6 +32,7 @@ defmodule SpotterWeb.SessionHookController do
       case Sessions.find_or_create(session_id, cwd: params["cwd"]) do
         {:ok, session} ->
           maybe_bootstrap_sync(session)
+          enqueue_ingest(session.project_id)
 
         {:error, reason} ->
           Logger.warning("Failed to create session #{session_id}: #{inspect(reason)}")
@@ -103,6 +106,24 @@ defmodule SpotterWeb.SessionHookController do
     end
   end
 
+  defp enqueue_ingest(project_id) do
+    %{project_id: project_id}
+    |> IngestRecentCommits.new()
+    |> Oban.insert()
+  end
+
+  defp maybe_enqueue_ingest_for_session(session_id) do
+    case Spotter.Transcripts.Session
+         |> Ash.Query.filter(session_id == ^session_id)
+         |> Ash.read_one() do
+      {:ok, %{project_id: project_id}} when not is_nil(project_id) ->
+        enqueue_ingest(project_id)
+
+      _ ->
+        :ok
+    end
+  end
+
   defp maybe_bootstrap_sync(session) do
     if is_nil(session.message_count) or session.message_count == 0 do
       Task.start(fn -> SyncTranscripts.sync_session_by_id(session.session_id) end)
@@ -122,6 +143,7 @@ defmodule SpotterWeb.SessionHookController do
       reason = params["reason"]
       ActiveSessionRegistry.end_session(session_id, reason)
       TranscriptTailSupervisor.stop_worker(session_id)
+      maybe_enqueue_ingest_for_session(session_id)
 
       conn
       |> OtelTraceHelpers.put_trace_response_header()

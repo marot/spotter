@@ -1,8 +1,8 @@
 defmodule SpotterWeb.HotspotsLive do
   use Phoenix.LiveView
 
-  alias Spotter.Transcripts.{CodeHotspot, Project}
-  alias Spotter.Transcripts.Jobs.ScoreHotspots
+  alias Spotter.Transcripts.{Commit, CommitHotspot, Project}
+  alias Spotter.Transcripts.Jobs.IngestRecentCommits
 
   require Ash.Query
   require OpenTelemetry.Tracer, as: Tracer
@@ -67,23 +67,26 @@ defmodule SpotterWeb.HotspotsLive do
      |> load_hotspots()}
   end
 
-  def handle_event("run_scoring", _params, %{assigns: %{selected_project_id: nil}} = socket) do
-    {:noreply, put_flash(socket, :error, "Select a project to run hotspot scoring.")}
+  def handle_event("analyze_commits", _params, %{assigns: %{selected_project_id: nil}} = socket) do
+    {:noreply, put_flash(socket, :error, "Select a project first.")}
   end
 
-  def handle_event("run_scoring", _params, socket) do
+  def handle_event("analyze_commits", _params, socket) do
     project_id = socket.assigns.selected_project_id
 
-    Tracer.with_span "spotter.hotspots_live.run_scoring" do
+    Tracer.with_span "spotter.hotspots_live.analyze_commits" do
       Tracer.set_attribute("spotter.project_id", project_id)
 
-      case %{project_id: project_id} |> ScoreHotspots.new() |> Oban.insert() do
+      case %{project_id: project_id, limit: 10}
+           |> IngestRecentCommits.new()
+           |> Oban.insert() do
         {:ok, _job} ->
-          {:noreply, put_flash(socket, :info, "Hotspot scoring queued for this project.")}
+          {:noreply,
+           put_flash(socket, :info, "Commit analysis queued (up to 10 recent commits).")}
 
         {:error, reason} ->
           Tracer.set_status(:error, "enqueue_error: #{inspect(reason)}")
-          {:noreply, put_flash(socket, :error, "Failed to queue hotspot scoring.")}
+          {:noreply, put_flash(socket, :error, "Failed to queue commit analysis.")}
       end
     end
   end
@@ -92,7 +95,7 @@ defmodule SpotterWeb.HotspotsLive do
     %{selected_project_id: project_id, min_score: min_score, sort_by: sort_by} = socket.assigns
 
     query =
-      CodeHotspot
+      CommitHotspot
       |> Ash.Query.filter(overall_score >= ^min_score)
       |> Ash.Query.sort([{sort_by, :desc}])
       |> Ash.Query.limit(@max_rows)
@@ -106,12 +109,30 @@ defmodule SpotterWeb.HotspotsLive do
 
     entries =
       try do
-        Ash.read!(query)
+        hotspots = Ash.read!(query)
+        enrich_with_commits(hotspots)
       rescue
         _ -> []
       end
 
     assign(socket, hotspot_entries: entries)
+  end
+
+  defp enrich_with_commits([]), do: []
+
+  defp enrich_with_commits(hotspots) do
+    commit_ids = hotspots |> Enum.map(& &1.commit_id) |> Enum.uniq()
+
+    commits =
+      Commit
+      |> Ash.Query.filter(id in ^commit_ids)
+      |> Ash.read!()
+      |> Map.new(&{&1.id, &1})
+
+    Enum.map(hotspots, fn h ->
+      commit = Map.get(commits, h.commit_id)
+      %{hotspot: h, commit: commit}
+    end)
   end
 
   defp parse_project_id("all"), do: nil
@@ -128,7 +149,7 @@ defmodule SpotterWeb.HotspotsLive do
 
   defp parse_min_score(_), do: 0
 
-  defp parse_sort_by("scored_at"), do: :scored_at
+  defp parse_sort_by("analyzed_at"), do: :analyzed_at
   defp parse_sort_by(_), do: :overall_score
 
   defp score_badge_class(score) when score >= 70, do: "badge badge-hot"
@@ -163,19 +184,38 @@ defmodule SpotterWeb.HotspotsLive do
     end
   end
 
+  defp short_hash(nil), do: "???????"
+
+  defp short_hash(commit) do
+    String.slice(commit.commit_hash, 0, 7)
+  end
+
+  defp commit_subject(nil), do: ""
+  defp commit_subject(commit), do: commit.subject || ""
+
   defp selected_project(assigns) do
     Enum.find(assigns.projects, &(&1.id == assigns.selected_project_id))
   end
+
+  defp strategy_label(metadata) when is_map(metadata) do
+    case Map.get(metadata, "strategy") do
+      "single_run" -> "single pass"
+      "explore_then_chunked" -> "explore + chunked"
+      other -> other
+    end
+  end
+
+  defp strategy_label(_), do: nil
 
   @impl true
   def render(assigns) do
     ~H"""
     <div class="container">
       <div class="page-header">
-        <h1>AI Hotspots</h1>
+        <h1>Commit Hotspots</h1>
         <div>
-          <button :if={@selected_project_id} phx-click="run_scoring" class="btn">
-            Run scoring
+          <button :if={@selected_project_id} phx-click="analyze_commits" class="btn">
+            Analyze recent commits
           </button>
           <a :if={@selected_project_id} href={"/projects/#{@selected_project_id}/heatmap"} class="btn btn-ghost">Heatmap</a>
           <a :if={@selected_project_id} href={"/co-change?project_id=#{@selected_project_id}"} class="btn btn-ghost">Co-change</a>
@@ -230,10 +270,10 @@ defmodule SpotterWeb.HotspotsLive do
             </button>
             <button
               phx-click="sort_by"
-              phx-value-field="scored_at"
-              class={"filter-btn#{if @sort_by == :scored_at, do: " is-active"}"}
+              phx-value-field="analyzed_at"
+              class={"filter-btn#{if @sort_by == :analyzed_at, do: " is-active"}"}
             >
-              Scored at
+              Analyzed at
             </button>
           </div>
         </div>
@@ -242,34 +282,44 @@ defmodule SpotterWeb.HotspotsLive do
       <%= if @hotspot_entries == [] do %>
         <div class="empty-state">
           <%= if @selected_project_id && selected_project(assigns) do %>
-            No AI-scored hotspots for {selected_project(assigns).name} yet.
+            No commit hotspots for {selected_project(assigns).name} yet.
           <% else %>
-            No AI-scored hotspots yet.
+            No commit hotspots yet.
           <% end %>
-          Run the scoring pipeline to analyze top heatmap files.
+          Select a project and click "Analyze recent commits" to get started.
         </div>
       <% else %>
         <div class="hotspot-list">
-          <div :for={entry <- @hotspot_entries} class="hotspot-card">
+          <div :for={%{hotspot: entry, commit: commit} <- @hotspot_entries} class="hotspot-card">
             <div class="hotspot-header">
-              <a
-                :if={@selected_project_id}
-                href={"/projects/#{@selected_project_id}/files/#{entry.relative_path}"}
-                class="hotspot-path"
-                title={entry.relative_path}
-              >
-                {entry.relative_path}
-              </a>
-              <span :if={!@selected_project_id} class="hotspot-path" title={entry.relative_path}>
-                {entry.relative_path}
-              </span>
+              <div class="hotspot-path-group">
+                <a
+                  :if={@selected_project_id}
+                  href={"/projects/#{@selected_project_id}/files/#{entry.relative_path}"}
+                  class="hotspot-path"
+                  title={entry.relative_path}
+                >
+                  {entry.relative_path}
+                </a>
+                <span :if={!@selected_project_id} class="hotspot-path" title={entry.relative_path}>
+                  {entry.relative_path}
+                </span>
+                <span :if={entry.symbol_name} class="symbol-name">{entry.symbol_name}</span>
+              </div>
               <span class={score_badge_class(entry.overall_score)}>
                 {Float.round(entry.overall_score, 1)}
               </span>
             </div>
 
+            <div class="commit-info">
+              <code class="commit-hash">{short_hash(commit)}</code>
+              <span class="commit-subject">{commit_subject(commit)}</span>
+            </div>
+
+            <div :if={entry.reason} class="hotspot-reason">{entry.reason}</div>
+
             <div class="rubric-factors">
-              <div :for={{name, score} <- entry.rubric} class="rubric-row">
+              <div :for={{name, score} <- entry.rubric || %{}} class="rubric-row">
                 <span class="rubric-name">{format_rubric_name(name)}</span>
                 <div class="rubric-bar-bg">
                   <div
@@ -284,8 +334,11 @@ defmodule SpotterWeb.HotspotsLive do
 
             <div class="hotspot-meta">
               <span>Lines {entry.line_start}-{entry.line_end}</span>
-              <span>Scored {relative_time(entry.scored_at)}</span>
+              <span>Analyzed {relative_time(entry.analyzed_at)}</span>
               <span class="model-tag">{entry.model_used}</span>
+              <span :if={strategy_label(entry.metadata)} class="model-tag">
+                {strategy_label(entry.metadata)}
+              </span>
             </div>
 
             <details class="snippet-details">
@@ -314,7 +367,14 @@ defmodule SpotterWeb.HotspotsLive do
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 0.75rem;
+        margin-bottom: 0.5rem;
+      }
+      .hotspot-path-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        overflow: hidden;
+        max-width: 80%;
       }
       .hotspot-path {
         font-family: monospace;
@@ -323,7 +383,43 @@ defmodule SpotterWeb.HotspotsLive do
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        max-width: 80%;
+      }
+      .symbol-name {
+        font-family: monospace;
+        font-size: 0.8rem;
+        color: #a78bfa;
+        background: #1f2937;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        white-space: nowrap;
+      }
+
+      .commit-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.8rem;
+      }
+      .commit-hash {
+        color: #fbbf24;
+        background: #1f2937;
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        font-size: 0.75rem;
+      }
+      .commit-subject {
+        color: #9ca3af;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hotspot-reason {
+        font-size: 0.8rem;
+        color: #d1d5db;
+        margin-bottom: 0.5rem;
+        line-height: 1.4;
       }
 
       .rubric-factors { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.75rem; }
