@@ -16,8 +16,6 @@ defmodule Spotter.Services.WaitingSummary do
 
   require Logger
 
-  @default_model "claude-3-5-haiku-latest"
-  @default_budget 4000
   @llm_timeout 15_000
 
   @type summary_result :: %{
@@ -184,26 +182,12 @@ defmodule Spotter.Services.WaitingSummary do
   end
 
   defp configured_model do
-    System.get_env("SPOTTER_SUMMARY_MODEL") || @default_model
+    {model, _source} = Spotter.Config.Runtime.summary_model()
+    model
   end
 
   defp configured_budget do
-    case System.get_env("SPOTTER_SUMMARY_TOKEN_BUDGET") do
-      nil ->
-        @default_budget
-
-      val ->
-        case Integer.parse(String.trim(val)) do
-          {int, ""} when int > 0 ->
-            int
-
-          _ ->
-            Logger.warning(
-              "Invalid SPOTTER_SUMMARY_TOKEN_BUDGET #{inspect(val)}, falling back to #{@default_budget}"
-            )
-
-            @default_budget
-        end
-    end
+    {budget, _source} = Spotter.Config.Runtime.summary_token_budget()
+    budget
   end
 end

@@ -21,7 +21,7 @@ config :spotter, Oban,
   repo: Spotter.Repo,
   plugins: [{Oban.Plugins.Cron, []}]
 
-config :spotter, ecto_repos: [Spotter.Repo], ash_domains: [Spotter.Transcripts]
+config :spotter, ecto_repos: [Spotter.Repo], ash_domains: [Spotter.Transcripts, Spotter.Config]
 
 config :spotter, SpotterWeb.Endpoint,
   render_errors: [
