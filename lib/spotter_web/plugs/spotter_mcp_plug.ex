@@ -37,6 +37,12 @@ defmodule SpotterWeb.SpotterMcpPlug do
         _ -> nil
       end
 
+    tool_name =
+      case conn.body_params do
+        %{"method" => "tools/call", "params" => %{"name" => name}} when is_binary(name) -> name
+        _ -> nil
+      end
+
     attrs =
       %{
         "http.method" => conn.method,
@@ -44,11 +50,22 @@ defmodule SpotterWeb.SpotterMcpPlug do
         "mcp.session_id_present" => session_id_present
       }
       |> maybe_put("mcp.jsonrpc_method", jsonrpc_method)
+      |> maybe_put("mcp.tool_name", tool_name)
 
     OtelTraceHelpers.with_span "spotter.mcp.http", attrs do
-      conn
-      |> OtelTraceHelpers.put_trace_response_header()
-      |> @mcp_router.call(router_opts)
+      try do
+        conn
+        |> OtelTraceHelpers.put_trace_response_header()
+        |> @mcp_router.call(router_opts)
+      rescue
+        e ->
+          OtelTraceHelpers.set_error(:mcp_request_failed, %{
+            "error.message" => Exception.message(e),
+            "mcp.tool_name" => tool_name || "unknown"
+          })
+
+          reraise e, __STACKTRACE__
+      end
     end
   end
 
