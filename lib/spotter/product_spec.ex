@@ -94,6 +94,78 @@ defmodule Spotter.ProductSpec do
     |> Enum.map(&normalize_requirement_evidence/1)
   end
 
+  @doc "Returns true when the Dolt-backed ProductSpec.Repo is running."
+  @spec dolt_available?() :: boolean()
+  def dolt_available?, do: Process.whereis(Spotter.ProductSpec.Repo) != nil
+
+  @doc "LIKE search against product domains."
+  @spec search_domains(String.t() | nil, String.t(), pos_integer()) :: [map()]
+  def search_domains(project_id, q, limit) do
+    pattern = "%#{q}%"
+
+    from(d in "product_domains",
+      where: like(d.name, ^pattern) or like(d.spec_key, ^pattern),
+      order_by: [asc: d.name],
+      limit: ^limit,
+      select: %{
+        id: d.id,
+        project_id: d.project_id,
+        spec_key: d.spec_key,
+        name: d.name,
+        description: d.description
+      }
+    )
+    |> maybe_filter_project(project_id)
+    |> Repo.all()
+  rescue
+    _ -> []
+  end
+
+  @doc "LIKE search against product features."
+  @spec search_features(String.t() | nil, String.t(), pos_integer()) :: [map()]
+  def search_features(project_id, q, limit) do
+    pattern = "%#{q}%"
+
+    from(f in "product_features",
+      where: like(f.name, ^pattern) or like(f.spec_key, ^pattern),
+      order_by: [asc: f.name],
+      limit: ^limit,
+      select: %{
+        id: f.id,
+        project_id: f.project_id,
+        spec_key: f.spec_key,
+        name: f.name,
+        description: f.description
+      }
+    )
+    |> maybe_filter_project(project_id)
+    |> Repo.all()
+  rescue
+    _ -> []
+  end
+
+  @doc "LIKE search against product requirements."
+  @spec search_requirements(String.t() | nil, String.t(), pos_integer()) :: [map()]
+  def search_requirements(project_id, q, limit) do
+    pattern = "%#{q}%"
+
+    from(r in "product_requirements",
+      where: like(r.statement, ^pattern) or like(r.spec_key, ^pattern),
+      order_by: [asc: r.spec_key],
+      limit: ^limit,
+      select: %{id: r.id, project_id: r.project_id, spec_key: r.spec_key, statement: r.statement}
+    )
+    |> maybe_filter_project(project_id)
+    |> Repo.all()
+  rescue
+    _ -> []
+  end
+
+  defp maybe_filter_project(query, nil), do: query
+
+  defp maybe_filter_project(query, project_id),
+    do: from(q in query, where: q.project_id == ^project_id)
+
   @doc """
   Returns the full domain -> features -> requirements tree for a project.
 
@@ -382,8 +454,6 @@ defmodule Spotter.ProductSpec do
 
   defp query_to_run(query, params), do: {query, params}
 
-  defp maybe_retry_query_with_literal_commit(_query, _params, _error), do: :no_retry
-
   defp maybe_retry_query_with_literal_commit(query, [dolt_commit_hash, project_id], error) do
     literal_query = query_with_literal_commit(query, dolt_commit_hash)
 
@@ -402,6 +472,8 @@ defmodule Spotter.ProductSpec do
       :no_retry
     end
   end
+
+  defp maybe_retry_query_with_literal_commit(_query, _params, _error), do: :no_retry
 
   defp query_with_literal_commit(query, dolt_commit_hash) do
     if String.contains?(query, "AS OF ?") and valid_dolt_commit_hash?(dolt_commit_hash) do

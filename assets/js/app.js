@@ -14,6 +14,7 @@ import plaintext from "highlight.js/lib/languages/plaintext"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
 import { createFlowGraphHook } from "./flow_graph"
+import { initGlobalSearchPalette } from "./global_search_palette"
 
 hljs.registerLanguage("elixir", elixir)
 hljs.registerLanguage("javascript", javascript)
@@ -97,6 +98,7 @@ function initReviewsBadge() {
 }
 
 initReviewsBadge()
+initGlobalSearchPalette()
 
 const Hooks = {}
 
@@ -326,7 +328,22 @@ Hooks.TranscriptHighlighter = {
 }
 
 Hooks.FileHighlighter = {
-  mounted() { this._highlight() },
+  mounted() {
+    this._highlight()
+    this.handleEvent("highlight_file_lines", ({ line_start, line_end }) => {
+      this._clearLineHighlights()
+      const rows = this.el.querySelectorAll(".blame-line")
+      let first = null
+      rows.forEach((row) => {
+        const lineNo = parseInt(row.querySelector(".blame-line-no")?.textContent, 10)
+        if (lineNo >= line_start && lineNo <= line_end) {
+          row.classList.add("is-file-line-highlight")
+          if (!first) first = row
+        }
+      })
+      if (first) first.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+  },
   updated() { this._highlight() },
   _highlight() {
     const blocks = this.el.querySelectorAll("pre code")
@@ -335,6 +352,11 @@ Hooks.FileHighlighter = {
       hljs.highlightElement(block)
       block.dataset.hljs = "done"
     }
+  },
+  _clearLineHighlights() {
+    this.el.querySelectorAll(".is-file-line-highlight").forEach((el) => {
+      el.classList.remove("is-file-line-highlight")
+    })
   },
 }
 

@@ -10,6 +10,8 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitHotspots do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Spotter.Search.Jobs.ReindexProject
+
   alias Spotter.Services.{
     CommitContextBuilder,
     CommitDiffExtractor,
@@ -66,6 +68,7 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitHotspots do
            CommitHotspotAgent.run(commit.commit_hash, commit.subject || "", diff_context) do
       persist_hotspots(project_id, commit, result)
       mark_success(commit, result.metadata)
+      %{project_id: project_id} |> ReindexProject.new() |> Oban.insert()
     else
       {:error, :missing_api_key} ->
         Logger.warning("AnalyzeCommitHotspots: missing API key, skipping")
