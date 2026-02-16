@@ -1,6 +1,7 @@
 defmodule SpotterWeb.ProductLive do
   use Phoenix.LiveView
 
+  alias Spotter.Observability.ErrorReport
   alias Spotter.ProductSpec
   alias Spotter.Services.ProductCommitTimeline
   alias Spotter.Services.SpecTestLinks
@@ -497,7 +498,12 @@ defmodule SpotterWeb.ProductLive do
             ProductCommitTimeline.list(%{project_id: project_id})
           rescue
             e ->
-              Tracer.set_status(:error, Exception.message(e))
+              ErrorReport.set_trace_error(
+                "unexpected_error",
+                Exception.message(e),
+                "live.product_live"
+              )
+
               %{rows: [], cursor: nil, has_more: false}
           end
 
@@ -525,7 +531,12 @@ defmodule SpotterWeb.ProductLive do
             ProductCommitTimeline.list(%{project_id: project_id}, %{after: cursor})
           rescue
             e ->
-              Tracer.set_status(:error, Exception.message(e))
+              ErrorReport.set_trace_error(
+                "unexpected_error",
+                Exception.message(e),
+                "live.product_live"
+              )
+
               %{rows: [], cursor: nil, has_more: false}
           end
 
@@ -602,7 +613,7 @@ defmodule SpotterWeb.ProductLive do
     end
   rescue
     e ->
-      Tracer.set_status(:error, Exception.message(e))
+      ErrorReport.set_trace_error("unexpected_error", Exception.message(e), "live.product_live")
 
       assign(socket,
         detail_content: nil,
@@ -639,7 +650,7 @@ defmodule SpotterWeb.ProductLive do
     end
   rescue
     e ->
-      Tracer.set_status(:error, Exception.message(e))
+      ErrorReport.set_trace_error("unexpected_error", Exception.message(e), "live.product_live")
 
       assign(socket,
         detail_content: nil,

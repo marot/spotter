@@ -10,6 +10,7 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitHotspots do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Spotter.Observability.ErrorReport
   alias Spotter.Search.Jobs.ReindexProject
 
   alias Spotter.Services.{
@@ -72,7 +73,13 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitHotspots do
       Logger.warning("AnalyzeCommitHotspots: unexpected error: #{reason}")
       Tracer.set_attribute("spotter.error.kind", "exception")
       Tracer.set_attribute("spotter.error.reason", String.slice(reason, 0, 500))
-      Tracer.set_status(:error, reason)
+
+      ErrorReport.set_trace_error(
+        "unexpected_error",
+        reason,
+        "transcripts.jobs.analyze_commit_hotspots"
+      )
+
       mark_error(commit.commit_hash, reason)
       :ok
   catch
@@ -81,7 +88,13 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitHotspots do
       Logger.warning("AnalyzeCommitHotspots: process exited: #{msg}")
       Tracer.set_attribute("spotter.error.kind", "exit")
       Tracer.set_attribute("spotter.error.reason", String.slice(msg, 0, 500))
-      Tracer.set_status(:error, msg)
+
+      ErrorReport.set_trace_error(
+        "unexpected_error",
+        msg,
+        "transcripts.jobs.analyze_commit_hotspots"
+      )
+
       mark_error(commit.commit_hash, msg)
       :ok
   end

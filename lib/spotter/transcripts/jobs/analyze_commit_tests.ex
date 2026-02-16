@@ -10,6 +10,7 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitTests do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Spotter.Observability.ErrorReport
   alias Spotter.Services.GitRunner
   alias Spotter.TestSpec.Agent.ToolHelpers, as: DoltHelpers
   alias Spotter.TestSpec.DoltVersioning
@@ -120,7 +121,13 @@ defmodule Spotter.Transcripts.Jobs.AnalyzeCommitTests do
       e ->
         reason = Exception.message(e)
         Logger.warning("AnalyzeCommitTests: failed: #{reason}")
-        Tracer.set_status(:error, reason)
+
+        ErrorReport.set_trace_error(
+          "unexpected_error",
+          reason,
+          "transcripts.jobs.analyze_commit_tests"
+        )
+
         Ash.update!(test_run, %{error: String.slice(reason, 0, 500)}, action: :fail)
         mark_commit_error(commit, reason)
         :ok

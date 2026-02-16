@@ -1,6 +1,7 @@
 defmodule SpotterWeb.TestsLive do
   use Phoenix.LiveView
 
+  alias Spotter.Observability.ErrorReport
   alias Spotter.Services.SpecTestLinks
   alias Spotter.Services.TestCommitTimeline
   alias Spotter.TestSpec
@@ -488,7 +489,12 @@ defmodule SpotterWeb.TestsLive do
             TestCommitTimeline.list(%{project_id: project_id})
           rescue
             e ->
-              Tracer.set_status(:error, Exception.message(e))
+              ErrorReport.set_trace_error(
+                "unexpected_error",
+                Exception.message(e),
+                "live.tests_live"
+              )
+
               %{rows: [], cursor: nil, has_more: false}
           end
 
@@ -516,7 +522,12 @@ defmodule SpotterWeb.TestsLive do
             TestCommitTimeline.list(%{project_id: project_id}, %{after: cursor})
           rescue
             e ->
-              Tracer.set_status(:error, Exception.message(e))
+              ErrorReport.set_trace_error(
+                "unexpected_error",
+                Exception.message(e),
+                "live.tests_live"
+              )
+
               %{rows: [], cursor: nil, has_more: false}
           end
 
@@ -593,7 +604,7 @@ defmodule SpotterWeb.TestsLive do
     end
   rescue
     e ->
-      Tracer.set_status(:error, Exception.message(e))
+      ErrorReport.set_trace_error("unexpected_error", Exception.message(e), "live.tests_live")
 
       assign(socket,
         detail_content: nil,
@@ -630,7 +641,7 @@ defmodule SpotterWeb.TestsLive do
     end
   rescue
     e ->
-      Tracer.set_status(:error, Exception.message(e))
+      ErrorReport.set_trace_error("unexpected_error", Exception.message(e), "live.tests_live")
 
       assign(socket,
         detail_content: nil,
