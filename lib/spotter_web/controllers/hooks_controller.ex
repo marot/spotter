@@ -367,9 +367,11 @@ defmodule SpotterWeb.HooksController do
 
   defp enqueue_analyze_tests(hashes, session) when hashes != [] do
     Enum.each(hashes, fn hash ->
-      %{project_id: session.project_id, commit_hash: hash}
-      |> AnalyzeCommitTests.new()
-      |> Oban.insert()
+      insert_and_emit(
+        %{project_id: session.project_id, commit_hash: hash},
+        AnalyzeCommitTests,
+        %{"project_id" => session.project_id, "commit_hash" => hash}
+      )
     end)
   end
 
