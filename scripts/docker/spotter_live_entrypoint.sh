@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fail fast if no API key
-if [ -z "${SPOTTER_ANTHROPIC_API_KEY:-}" ]; then
-  echo "ERROR: SPOTTER_ANTHROPIC_API_KEY is required" >&2
-  exit 1
-fi
-
 # Ensure mix tools exist for the runtime user
 mkdir -p "${HOME}/.mix"
 mix local.hex --force
 mix local.rebar --force
 
 # Ensure Claude home dirs exist
-mkdir -p "${HOME}/.claude/projects"
+mkdir -p "${HOME}/.claude/projects" "${HOME}/.claude_agents/projects"
 
 # Ensure frontend assets exist (self-heal if missing/empty)
 ASSET_PATH="/app/priv/static/assets/app.js"

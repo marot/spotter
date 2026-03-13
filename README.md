@@ -2,6 +2,121 @@
 
 Spotter reviews Claude Code sessions and generated code. It links Claude sessions to Git commits using deterministic hook capture plus asynchronous enrichment so each session can be traced to concrete repository changes. The runtime stack is Phoenix/LiveView for the app, xterm.js for terminal rendering, and tmux-integrated hook scripts for session event capture.
 
+## Navigation
+
+| Route | Page | Purpose |
+|-------|------|---------|
+| `/` | Dashboard | Ongoing sessions across all projects |
+| `/sessions` | Sessions | Project-filtered session browsing with import, hide/unhide, and pagination |
+| `/sessions/:id` | Session detail | Transcript review for a single session |
+| `/reviews` | Reviews | Open review annotations |
+| `/retros` | Retros | Session retrospectives |
+| `/history` | History | Commit history and detail views |
+| `/file-metrics` | File metrics | Heatmap and co-change analysis |
+| `/telemetry/commands` | Telemetry | Shell command telemetry |
+
+The sidebar highlights the active page. The Sessions link covers both `/sessions` and `/sessions/:id`.
+
+## Local Development Runtime
+
+**Scope:** local-dev only. No installer or production deployment support in this contract.
+
+### Required Tools
+
+| Tool | Purpose |
+|------|---------|
+| [just](https://github.com/casey/just) | Command runner (delegates to `scripts/runtime/`) |
+| [overmind](https://github.com/DarthSim/overmind) | Process manager (reads `Procfile`) |
+| [docker](https://docs.docker.com/get-docker/) | Runs Dolt SQL-server container |
+
+All three must be on `$PATH`. If any are missing, `just up` exits non-zero with a single error listing all missing tools.
+
+### Environment Variables
+
+None required. All variables have sensible defaults:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `SPOTTER_DOLT_HOST` | `127.0.0.1` | Dolt server host |
+| `SPOTTER_DOLT_HOST_PORT` | `13307` | Dolt host-mapped port |
+| `SPOTTER_DOLT_DATABASE` | `spotter_product` | Main Dolt database |
+| `SPOTTER_DOLT_USERNAME` | `spotter` | Dolt credentials |
+| `SPOTTER_DOLT_PASSWORD` | `spotter` | Dolt credentials |
+
+### Commands
+
+```
+just up        # Start all services (Dolt + Phoenix)
+just down      # Stop all services
+just status    # Show service health
+just logs      # Tail service logs
+just reset     # Stop, wipe state, restart clean
+```
+
+### Startup Sequence (`just up`)
+
+1. Check prerequisites (`just`, `overmind`, `docker`) — batch all missing into one error
+2. Start Dolt container via Docker Compose
+3. Readiness check: ping Dolt with 30-second timeout
+4. Start Phoenix via overmind (reads `Procfile`)
+
+### Service Ports
+
+| Service | Port | Binding |
+|---------|------|---------|
+| Phoenix | `1100` base | `0.0.0.0` (deterministic per-worktree via `.worktree-ports.json`) |
+| Dolt | `13307` base | `0.0.0.0` (deterministic per-worktree Docker host mapping) |
+
+### OpenTelemetry (always on)
+
+`just up` ensures the OTEL stack is available before starting Phoenix. Manual controls:
+
+```
+just otel-up
+just otel-down
+just otel-restart
+just otel-status
+```
+
+| Service | Port | Binding |
+|---------|------|---------|
+| OTEL Collector (gRPC) | `14317` | `127.0.0.1` |
+| OTEL Collector (HTTP) | `14318` | `127.0.0.1` |
+| OTEL Collector health | `14333` | `127.0.0.1` |
+| OTEL Collector metrics | `14389` | `127.0.0.1` |
+| Jaeger UI | `14686` | `127.0.0.1` |
+| Prometheus UI | `14090` | `127.0.0.1` |
+
+### CLI UX Contract
+
+- Service state indicators: `●` running, `✕` stopped, `!` error
+- ANSI colors only when stdout is a TTY
+- Justfile recipes delegate to `scripts/runtime/` for testability
+
+### Out of Scope
+
+- Installer / bundle path (no `curl | bash` setup)
+- Production deployment
+- Remote/cloud runtime
+
+### Transcript Roots
+
+Spotter discovers transcripts from multiple root directories configured via `transcript_roots`. This replaces the former single-path `transcripts_dir` setting.
+
+**Precedence:** DB setting → TOML (`priv/spotter.toml`) → defaults.
+
+| Source | Format | Example |
+|--------|--------|---------|
+| DB setting (key: `transcript_roots`) | JSON array string | `["~/.claude/projects", "/custom/path"]` |
+| TOML (`priv/spotter.toml`) | TOML array | `transcript_roots = ["~/.claude/projects"]` |
+| Default | — | `~/.claude/projects`, `~/.claude_agents/projects` |
+
+Paths are normalized: `~` is expanded, relative paths are made absolute, duplicates are removed. Discovery and import scan all configured roots and deduplicate by session ID, preferring the first root in configuration order.
+
+For live container mode, set `SPOTTER_LIVE_TRANSCRIPT_ROOTS` (colon-separated paths) before running `mix spotter.live.configure`. When unset, both default roots are written.
+
+The Docker entrypoint and e2e runtime scripts create both default root directories automatically. Plugin session notifiers (`notify-session.sh`, `notify-session-end.sh`) forward `transcript_path` from hook payloads when present, enabling path-based transcript resolution.
+
 ## Showcase quickstart (one command)
 
 Run Spotter + Claude Code + tmux in Docker without cloning this repo.
@@ -9,7 +124,6 @@ Run Spotter + Claude Code + tmux in Docker without cloning this repo.
 ### Prerequisites
 
 - Docker Desktop or Docker Engine with `docker compose`
-- `SPOTTER_ANTHROPIC_API_KEY` exported
 - A local git repo to run inside (or pass `--repo`)
 
 ### Install
@@ -23,7 +137,6 @@ Ensure `~/.local/bin` is in your `PATH`.
 ### Run
 
 ```bash
-export SPOTTER_ANTHROPIC_API_KEY=sk-ant-...
 cd /path/to/target-repo
 spotter
 ```
@@ -125,54 +238,18 @@ Only links with `confidence >= 0.60` are persisted.
 - No `git show` or `git patch-id` in hook scripts (deferred to backend)
 - Silent-fail semantics: hooks never block Claude
 
+### Stop vs SessionEnd hooks
+
+- `Stop` is not authoritative for session completion. It is used for per-response lifecycle behavior (for example waiting-overlay cleanup) and may not fire if a response is interrupted.
+- `SessionEnd` is the authoritative end-of-session trigger. Spotter runs `notify-session-end.sh` and `raw-event-forward.sh` on this event.
+- Backend finalization on SessionEnd stops any active tail worker, runs per-session transcript sync, marks `session_ended_at`, and enqueues follow-up ingest jobs when project context exists.
+- Manual transcript import remains available for backfill/historical recovery, but normal session completion should not require manual import.
+
 ### Known limitations
 
 - Commits created outside Claude hooks are not deterministically observed
 - Squash merges may require inference and can be low-confidence
 - Git-only in V1; no GitHub/GitLab API integration
-
-## Anthropic API key (AI hotspots / waiting summary)
-
-LLM-powered features (hotspot scoring, waiting summary) use the Anthropic API via LangChain.
-
-- **Environment variable**: `SPOTTER_ANTHROPIC_API_KEY`
-- **LangChain app config**: `:langchain, :anthropic_key` (wired in `config/runtime.exs`)
-- **Resolution order**: app config first, then system env fallback
-- **Fail-safe**: when the key is missing or blank, LLM features degrade gracefully (deterministic fallback summaries, scoring skipped) without crashing workers or making outbound API calls
-
-## Claude Agent SDK (Claude Code CLI)
-
-Several features use [claude_agent_sdk](https://hexdocs.pm/claude_agent_sdk) to run Claude-powered agents in-process via the Claude Code CLI:
-
-- **Product spec rolling spec** (epic `spotter-aml`)
-- **Commit test extraction** (epic `spotter-z3e`)
-
-### Prerequisites
-
-Install the Claude Code CLI globally:
-
-```bash
-npm install -g @anthropic-ai/claude-code
-claude --version
-```
-
-The SDK authenticates via `SPOTTER_ANTHROPIC_API_KEY` (environment variable) or CLI auth (`claude auth`).
-
-In test mode, the SDK uses a mock server (`ClaudeAgentSDK.Mock`) so the CLI binary is not required for `mix test`.
-
-## Session & Project Distillation
-
-Completed sessions are distilled into structured summaries via Claude Agent SDK tool-loop agents. Both session and project rollup distillers use in-process MCP tools (`record_session_distillation`, `record_project_rollup_distillation`) with validation and normalization.
-
-### Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `SPOTTER_SESSION_DISTILL_MODEL` | `claude-3-5-haiku-latest` | LLM model for session distillation |
-| `SPOTTER_DISTILL_TIMEOUT_MS` | `45000` | Session distillation timeout in ms |
-| `SPOTTER_SESSION_DISTILL_INPUT_CHAR_BUDGET` | `30000` | Char budget for transcript slice |
-| `SPOTTER_PROJECT_ROLLUP_MODEL` | `claude-3-5-haiku-latest` | LLM model for project rollups |
-| `SPOTTER_PROJECT_ROLLUP_DISTILL_TIMEOUT_MS` | `45000` | Project rollup distillation timeout in ms |
 
 ## MCP Server
 
@@ -180,92 +257,15 @@ The Spotter MCP server is provided by the plugin via `spotter-plugin/.mcp.json`.
 
 The MCP server URL is controlled by the `SPOTTER_URL` environment variable (default `http://127.0.0.1:1100`). The plugin config uses `${SPOTTER_URL:-http://127.0.0.1:1100}/api/mcp`.
 
-`scripts/setup_worktree.sh` sets `SPOTTER_URL` automatically per worktree based on the assigned port and Tailscale IP, so each tmux-launched Claude session connects to the correct Spotter instance.
-
-## Product Specification (Dolt)
-
-Spotter can maintain a rolling, versioned product specification derived from codebase changes. The spec is stored in a Dolt SQL-server (MySQL-compatible with Git-style versioning).
-
-### Setup
-
-Start the Dolt SQL-server:
-
-```bash
-docker compose -f docker-compose.dolt.yml up -d
-```
-
-The bootstrap SQL (`docker/dolt-init.sql`) creates both `spotter_product` and `spotter_tests` databases. The `scripts/start_spotter.sh` script also ensures both databases exist before starting the app. The schema is created automatically on startup.
-
-If Dolt is unavailable, the app boots normally — product spec features are simply inactive.
-
-### Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `SPOTTER_DOLT_HOST` | `localhost` | Dolt server hostname |
-| `SPOTTER_DOLT_PORT` | `13307` | Dolt server port |
-| `SPOTTER_DOLT_DATABASE` | `spotter_product` | Dolt database name |
-| `SPOTTER_DOLT_USERNAME` | `spotter` | Dolt username |
-| `SPOTTER_DOLT_PASSWORD` | `spotter` | Dolt password |
-
-Tests run without Dolt. Integration tests require Dolt: `mix test --include live_dolt`.
-
-## Test Specifications (Dolt)
-
-Spotter extracts structured test specifications from commits using Claude agents, storing them in a Dolt database (`spotter_tests`). The `/specs` page (artifact=tests) provides a read-only view of the versioned test tree.
-
-### How it works
-
-1. When commits are ingested (via hooks or `IngestRecentCommits`), `AnalyzeCommitTests` is enqueued for commits with test file changes.
-2. The agent reads each changed test file at the analyzed commit and extracts test metadata (framework, describe path, test name, given/when/then) into Dolt.
-3. Each analysis run creates a Dolt commit snapshot. The snapshot hash is stored in `CommitTestRun.dolt_commit_hash`.
-4. The `/specs` page uses time-travel queries (`AS OF`) to show the test tree at any commit, and computes semantic diffs between snapshots.
-
-### `/specs` page (merged Product + Tests)
-
-The Specs page (`/specs`) combines product and test specifications into a single commit-centric view. Users switch between artifact types (Product/Tests) and view modes (Diff/Snapshot) without leaving context.
-
-- **Timeline**: project-scoped commit list with both product and test run badges
-- **Artifact toggle**: switch between Product and Tests specs for the same commit
-- **Diff view**: shows added, changed, and removed specs for a commit
-- **Snapshot view**: full tree (domains/features/requirements for product, files/tests for tests) with search and expand/collapse controls
-
-### Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `SPOTTER_TEST_SPEC_DOLT_HOST` | `SPOTTER_DOLT_HOST` | Test spec Dolt hostname |
-| `SPOTTER_TEST_SPEC_DOLT_PORT` | `SPOTTER_DOLT_PORT` | Test spec Dolt port |
-| `SPOTTER_TEST_SPEC_DOLT_DATABASE` | `spotter_tests` | Test spec Dolt database |
-| `SPOTTER_TEST_SPEC_DOLT_USERNAME` | `SPOTTER_DOLT_USERNAME` | Test spec Dolt username |
-| `SPOTTER_TEST_SPEC_DOLT_PASSWORD` | `SPOTTER_DOLT_PASSWORD` | Test spec Dolt password |
-
-If Dolt is unavailable, the app boots normally — test spec features show a callout and disable data loading.
-
-The `spotter_tests` database is created automatically at two layers:
-1. **Bootstrap SQL** — `docker/dolt-init.sql` (and `install/bundle/dolt/dolt-init.sql`) provisions both databases on first Dolt startup.
-2. **Runtime self-heal** — `Schema.ensure_database!/0` creates the database via a direct MyXQL connection before table DDL runs. This handles cases where the bootstrap SQL was not applied (e.g. existing Dolt instance).
+Worktree hooks generate `.worktree.env`, `config/dev.local.exs`, `.port`, and `.mcp.json` from `.worktree-ports.json`, so each worktree gets deterministic ports and a matching `SPOTTER_URL` target.
 
 ### Troubleshooting
-
-If logs show repeated `database not found: spotter_tests` errors:
-1. Verify Dolt is reachable: `mysql -h127.0.0.1 -P13307 -uspotter -pspotter -e "SELECT 1"`
-2. Check env overrides: `SPOTTER_TEST_SPEC_DOLT_DATABASE` defaults to `spotter_tests`
-3. Restart the app — `ensure_database!/0` will auto-create the missing database
 
 If logs show tzdata permission errors like:
 `could not write to file "/app/_build/dev/lib/tzdata/priv/latest_remote_poll.txt": permission denied`
 1. Restart Spotter after pulling the latest installer bundle/config (defaults to writable `/tmp/tzdata`)
 2. Optionally set a custom path: `SPOTTER_TZDATA_DIR=/path/you/control`
 3. If you don’t run tracing collectors, you can ignore this OTEL export warning and keep tracing disabled in local troubleshooting mode
-
-### Rollout checklist
-
-1. Start Dolt: `docker compose -f docker-compose.dolt.yml up -d`
-2. Boot or restart the app (schema is created automatically on startup)
-3. Verify hook enqueue: trigger a commit with test changes and check that `AnalyzeCommitTests` jobs appear
-4. Verify `/specs?artifact=tests` timeline shows commits with test-run badges
-5. Verify no-change commits show "ok (no changes)" badge (no Dolt snapshot created)
 
 ## Local E2E (Docker + Playwright + Live Claude)
 
@@ -277,20 +277,20 @@ Spotter includes a local-only E2E harness that runs:
 ### Prerequisites
 
 - Docker + Docker Compose
-- `SPOTTER_ANTHROPIC_API_KEY` exported in your shell (the app will fail to start in dev/prod without it)
 
 ### Refresh transcript fixtures from host Claude sessions
 
-Fixture snapshot source is restricted to:
+Fixture snapshot source is restricted to spotter project directories matching:
 
-- `~/.claude/projects/-home-*-projects-spotter`
-- `~/.claude/projects/-home-*-projects-spotter-worktrees*`
+- `-home-*-projects-spotter`
+- `-home-*-projects-spotter-worktrees*`
 
-Run:
+The script scans multiple roots by default (`~/.claude/projects` and `~/.claude_agents/projects`). Override with `SNAPSHOT_TRANSCRIPT_ROOTS` (colon-separated) or a single positional argument:
 
 ```bash
-scripts/e2e/snapshot_transcripts.sh
-scripts/e2e/scan_fixtures_secrets.sh
+scripts/e2e/snapshot_transcripts.sh                          # both default roots
+SNAPSHOT_TRANSCRIPT_ROOTS=/custom/root scripts/e2e/snapshot_transcripts.sh  # custom root
+scripts/e2e/scan_fixtures_secrets.sh                         # verify no secrets leaked
 ```
 
 The snapshot script selects longer sessions (line-count based), forces subagent coverage when available, sanitizes data, and writes metadata to `test/fixtures/transcripts/README.md`.
@@ -298,13 +298,13 @@ The snapshot script selects longer sessions (line-count based), forces subagent 
 ### Run E2E suite
 
 ```bash
-SPOTTER_ANTHROPIC_API_KEY=... scripts/e2e/run.sh
+scripts/e2e/run.sh
 ```
 
 Default host port is `1101`. If it is already in use, override it:
 
 ```bash
-SPOTTER_E2E_HOST_PORT=1102 SPOTTER_ANTHROPIC_API_KEY=... scripts/e2e/run.sh
+SPOTTER_E2E_HOST_PORT=1102 scripts/e2e/run.sh
 ```
 
 This command:
@@ -319,6 +319,51 @@ This command:
 - Playwright artifacts: `e2e/test-results/` and `e2e/playwright-report/`
 - Snapshot assertions use full-page captures with tolerance `0.001`
 - If recurring flakiness appears, report artifacts first. Do not switch to component snapshots without an explicit user decision.
+
+## Observability
+
+Spotter supports three observability flows controlled by environment variables in `scripts/start_spotter.sh`.
+
+### Shared contract collector (default)
+
+When the shared dev observability stack is already running (detected by the `dev.observability.contract=v1` Docker label):
+
+```bash
+scripts/start_spotter.sh
+# → Detects shared collector, skips local OTEL stack, exports to http://localhost:14318
+```
+
+### Local fallback
+
+When no shared stack is running and you want local observability:
+
+```bash
+export SPOTTER_OTEL_LOCAL_FALLBACK=1
+scripts/start_spotter.sh
+# → Starts local collector + Jaeger from docker-compose.otel.yml
+```
+
+### External endpoint override
+
+For custom or remote collectors:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://my-collector.example.com:4318
+scripts/start_spotter.sh
+# → Uses explicit endpoint, no local stack started
+```
+
+### Observability environment variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `OBS_ENABLED` | Enable contract-aware startup | `true` |
+| `SPOTTER_OTEL_LOCAL_FALLBACK` | Allow local stack when no contract collector | unset (disabled) |
+| `SPOTTER_OTEL_ENABLED` | Elixir SDK instrumentation toggle | `true` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint URL | `http://localhost:14318` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Resource attributes (comma-separated key=value) | auto-filled with project/worktree defaults |
+
+> OTEL traces contain technical identifiers only (span names, durations, service metadata). Resource attributes are project and worktree names — no personally identifiable information (PII) is collected or exported.
 
 ## OpenTelemetry Tracing
 
@@ -335,7 +380,7 @@ Plugin hooks → traceparent header → Phoenix controllers → Ash actions → 
 | Plugin hooks | W3C `traceparent` header generation | (client-side, no spans) |
 | Phoenix controllers | `with_span` macro in hook controllers | `spotter.hook.*` |
 | Ash Framework | `opentelemetry_ash` tracer (action, custom, flow) | `ash.*` |
-| Oban jobs | Manual spans in job `perform/1` functions | `spotter.enrich_commits.perform`, `spotter.ingest_recent_commits.perform`, `spotter.sync_transcripts.perform`, `spotter.product_spec.update_rolling_spec.perform` |
+| Oban jobs | Manual spans in job `perform/1` functions | `spotter.enrich_commits.perform`, `spotter.ingest_recent_commits.perform`, `spotter.sync_transcripts.perform` |
 | LiveView | Telemetry handler for mount/handle_params/handle_event | `spotter.liveview.*` |
 | TerminalChannel | Span events for join/input/resize/stream lifecycle | `spotter.channel.*` |
 
@@ -344,8 +389,6 @@ Plugin hooks → traceparent header → Phoenix controllers → Ash actions → 
 Hook controllers propagate trace context into Oban jobs via `OtelTraceHelpers.maybe_add_trace_context/1`, which adds `otel_trace_id` and `otel_traceparent` to job args. Jobs read these and set them as span attributes (`spotter.parent_trace_id`, `spotter.parent_traceparent`), enabling cross-process trace correlation.
 
 Hook responses expose the `x-spotter-trace-id` header. Use this ID to query related spans in Jaeger, including downstream job spans from the same request.
-
-The `ObanTelemetry` handler extracts trace context from job args and includes `traceparent`/`trace_id` in FlowHub events, enabling the `/flows` view to display trace linkage between hooks and jobs.
 
 ### Local mode (default OTLP collector)
 
@@ -362,26 +405,26 @@ scripts/otel/start.sh
 
 ```bash
 export OTEL_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318
 mix phx.server
 ```
 
 3. Inspect traces:
 
 - JSON trace file: `tail -f tmp/otel/spotter-traces.json`
-- Jaeger UI: `http://localhost:16686`
+- Jaeger UI: `http://localhost:14686`
 
 Query Jaeger programmatically:
 
 ```bash
 # List available services
-curl http://localhost:16686/api/services
+curl http://localhost:14686/api/services
 
 # Recent traces for the Spotter service
-curl "http://localhost:16686/api/traces?service=spotter&limit=20"
+curl "http://localhost:14686/api/traces?service=spotter&limit=20"
 
 # Lookup a specific trace by ID (from x-spotter-trace-id response header)
-curl "http://localhost:16686/api/traces?traceID=<trace_id>&limit=50"
+curl "http://localhost:14686/api/traces?traceID=<trace_id>&limit=50"
 ```
 
 4. Stop the stack when done:
@@ -406,7 +449,7 @@ Set these environment variables to send spans to an OTLP-compatible collector:
 
 ```bash
 export OTEL_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318
 ```
 
 ### Troubleshooting
@@ -420,7 +463,6 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 | Exporter connection errors | OTLP endpoint unreachable | Verify `OTEL_EXPORTER_OTLP_ENDPOINT` is correct |
 | Duplicate telemetry handlers after code reload | Handler re-attachment | `LiveviewOtel.setup/0` detaches before re-attaching |
 | Ash action spans missing | Tracer not configured | Verify `config :ash, tracer: [OpentelemetryAsh]` in config |
-| Hotspot/test/spec agent crash `FunctionClauseError` on `{:transport_stderr, _}` | Upstream SDK missing stderr handler | Using vendored SDK at `vendor/claude_agent_sdk` with fix. Remove when upstream `claude_agent_sdk` >= 0.15 includes the fix |
 
 ## `.spotterignore` (co-change filtering)
 

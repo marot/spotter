@@ -2,20 +2,18 @@ defmodule SpotterWeb.SessionHookController do
   @moduledoc false
   use Phoenix.Controller, formats: [:json]
 
-  alias Spotter.Config.Runtime, warn: false
+  alias Spotter.Config.Runtime
   alias Spotter.Observability.ErrorReport
   alias Spotter.Observability.FlowHub
   alias Spotter.Observability.FlowKeys
-  alias Spotter.Services.ActiveSessionRegistry
-  alias Spotter.Services.SessionRegistry
+  alias Spotter.Services.SessionActivityBroadcaster
+  alias Spotter.Services.SessionEndFinalizer
   alias Spotter.Services.TranscriptTailSupervisor
-  alias Spotter.Services.WaitingSummary
   alias Spotter.Telemetry.TraceContext
-  alias Spotter.Transcripts.Jobs.{DistillCompletedSession, IngestRecentCommits, SyncTranscripts}
+  alias Spotter.Transcripts.Jobs.{IngestRecentCommits, SyncTranscripts}
   alias Spotter.Transcripts.Sessions
   alias SpotterWeb.OtelTraceHelpers
 
-  require Ash.Query
   require Logger
   require SpotterWeb.OtelTraceHelpers
 
@@ -38,14 +36,12 @@ defmodule SpotterWeb.SessionHookController do
         "hook_script" => hook_script
       })
 
-      SessionRegistry.register(pane_id, session_id)
-      ActiveSessionRegistry.start_session(session_id, pane_id)
-
       case Sessions.find_or_create(session_id, cwd: params["cwd"]) do
         {:ok, session} ->
-          maybe_bootstrap_sync(session)
+          maybe_bootstrap_sync(session, params["transcript_path"])
           enqueue_ingest(session.project_id)
-          maybe_start_tail_worker(session_id, params["cwd"])
+          maybe_start_tail_worker(session_id, params["cwd"], params["transcript_path"])
+          SessionActivityBroadcaster.broadcast_started(session_id)
 
         {:error, reason} ->
           Logger.warning("Failed to create session #{session_id}: #{inspect(reason)}")
@@ -91,109 +87,70 @@ defmodule SpotterWeb.SessionHookController do
     end
   end
 
-  def waiting_summary(
-        conn,
-        %{"session_id" => session_id, "transcript_path" => transcript_path} = params
-      )
-      when is_binary(session_id) and is_binary(transcript_path) do
-    flow_keys = [FlowKeys.session(session_id)]
-
+  def waiting_summary(conn, %{"session_id" => session_id} = _params)
+      when is_binary(session_id) do
     OtelTraceHelpers.with_span "spotter.hook.waiting_summary", %{
       "spotter.session_id" => session_id
     } do
-      emit_hook_received("waiting_summary", flow_keys, %{
-        "session_id" => session_id
+      conn
+      |> OtelTraceHelpers.put_trace_response_header()
+      |> json(%{
+        ok: true,
+        summary: "Session #{session_id} in progress.",
+        input_chars: 0,
+        source_window: %{head_messages: 0, tail_messages: 0}
       })
-
-      opts =
-        case params["token_budget"] do
-          budget when is_integer(budget) and budget > 0 -> [token_budget: budget]
-          _ -> []
-        end
-
-      case WaitingSummary.generate(transcript_path, opts) do
-        {:ok, result} ->
-          emit_hook_outcome("waiting_summary", :ok, flow_keys)
-
-          conn
-          |> OtelTraceHelpers.put_trace_response_header()
-          |> json(%{
-            ok: true,
-            summary: result.summary,
-            input_chars: result.input_chars,
-            source_window: result.source_window
-          })
-
-        {:error, _reason} ->
-          fallback = WaitingSummary.build_fallback_summary(session_id, [])
-          emit_hook_outcome("waiting_summary", :ok, flow_keys)
-
-          conn
-          |> OtelTraceHelpers.put_trace_response_header()
-          |> json(%{
-            ok: true,
-            summary: fallback,
-            input_chars: 0,
-            source_window: %{head_messages: 0, tail_messages: 0}
-          })
-      end
     end
   end
 
   def waiting_summary(conn, _params) do
-    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "unknown"
-    hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
-
-    OtelTraceHelpers.with_span "spotter.hook.waiting_summary", %{} do
-      error_payload =
-        ErrorReport.hook_flow_error(
-          "invalid_params",
-          "session_id and transcript_path are required",
-          400,
-          hook_event,
-          hook_script,
-          %{
-            "error.source" => "session_hook_controller",
-            "reason" => "session_id and transcript_path are required"
-          }
-        )
-
-      OtelTraceHelpers.set_error("invalid_params", %{
-        "http.status_code" => 400,
-        "error.source" => "session_hook_controller"
-      })
-
-      emit_hook_outcome("waiting_summary", :error, [FlowKeys.system()], error_payload)
-
-      conn
-      |> put_status(:bad_request)
-      |> OtelTraceHelpers.put_trace_response_header()
-      |> json(%{error: "session_id and transcript_path are required"})
-    end
+    conn
+    |> put_status(:bad_request)
+    |> OtelTraceHelpers.put_trace_response_header()
+    |> json(%{error: "session_id is required"})
   end
 
   def session_end(conn, %{"session_id" => session_id} = params)
       when is_binary(session_id) do
-    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "Stop"
+    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "SessionEnd"
     hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
+    reason = params["reason"] || "unknown"
     flow_keys = [FlowKeys.session(session_id)]
 
     OtelTraceHelpers.with_span "spotter.hook.session_end", %{
       "spotter.session_id" => session_id,
       "spotter.hook.event" => hook_event,
-      "spotter.hook.script" => hook_script
+      "spotter.hook.script" => hook_script,
+      "spotter.session_end.reason" => reason
     } do
       emit_hook_received("session_end", flow_keys, %{
         "session_id" => session_id,
         "hook_event" => hook_event,
-        "hook_script" => hook_script
+        "hook_script" => hook_script,
+        "reason" => reason
       })
 
-      reason = params["reason"]
-      ActiveSessionRegistry.end_session(session_id, reason)
-      TranscriptTailSupervisor.stop_worker(session_id)
-      maybe_enqueue_ingest_for_session(session_id)
-      mark_ended_and_enqueue_distillation(session_id, params)
+      trace_ctx = OtelTraceHelpers.maybe_add_trace_context(%{})
+      finalize_opts = [trace_context: trace_ctx]
+
+      finalize_opts =
+        case params["transcript_path"] do
+          path when is_binary(path) and path != "" ->
+            [{:transcript_path, path} | finalize_opts]
+
+          _ ->
+            finalize_opts
+        end
+
+      result = SessionEndFinalizer.finalize(session_id, params, finalize_opts)
+
+      OtelTraceHelpers.set_attributes_safely(%{
+        "spotter.session_end.sync_status" => to_string(result.sync_status),
+        "spotter.session_end.ingested_messages" => result.ingested_messages,
+        "spotter.session_end.marked_ended" => to_string(result.marked_ended),
+        "spotter.session_end.ingest_enqueued" => result.ingest_enqueued,
+        "spotter.session_end.marked_finished" => result.marked_ended == :ok
+      })
 
       emit_hook_outcome("session_end", :ok, flow_keys)
 
@@ -204,7 +161,7 @@ defmodule SpotterWeb.SessionHookController do
   end
 
   def session_end(conn, _params) do
-    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "Stop"
+    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "SessionEnd"
     hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
 
     OtelTraceHelpers.with_span "spotter.hook.session_end", %{} do
@@ -286,48 +243,28 @@ defmodule SpotterWeb.SessionHookController do
     |> Oban.insert()
   end
 
-  defp maybe_enqueue_ingest_for_session(session_id) do
-    case Spotter.Transcripts.Session
-         |> Ash.Query.filter(session_id == ^session_id)
-         |> Ash.read_one() do
-      {:ok, %{project_id: project_id}} when not is_nil(project_id) ->
-        enqueue_ingest(project_id)
-
-      _ ->
-        :ok
-    end
+  defp maybe_start_tail_worker(session_id, _cwd, transcript_path)
+       when is_binary(transcript_path) and transcript_path != "" do
+    start_tail_worker(session_id, transcript_path)
   end
 
-  defp mark_ended_and_enqueue_distillation(session_id, params) do
-    case Sessions.find_or_create(session_id, cwd: params["cwd"]) do
-      {:ok, session} ->
-        Ash.update!(session, %{hook_ended_at: DateTime.utc_now()})
-
-        %{session_id: session_id}
-        |> OtelTraceHelpers.maybe_add_trace_context()
-        |> DistillCompletedSession.new()
-        |> Oban.insert()
-
-      {:error, reason} ->
-        Logger.warning("Failed to mark session ended #{session_id}: #{inspect(reason)}")
-    end
+  defp maybe_start_tail_worker(session_id, cwd, _transcript_path) when is_binary(cwd) do
+    start_tail_worker(session_id, live_transcript_path(cwd, session_id))
   end
 
-  defp maybe_start_tail_worker(session_id, cwd) when is_binary(cwd) do
-    transcript_path = live_transcript_path(cwd, session_id)
-    TranscriptTailSupervisor.ensure_worker(session_id, transcript_path)
+  defp maybe_start_tail_worker(_session_id, _cwd, _transcript_path), do: :ok
+
+  defp start_tail_worker(session_id, path) do
+    TranscriptTailSupervisor.ensure_worker(session_id, path)
   rescue
     error ->
       Logger.debug("Failed to start tail worker for #{session_id}: #{inspect(error)}")
       :ok
   end
 
-  defp maybe_start_tail_worker(_session_id, _cwd), do: :ok
-
   defp live_transcript_path(cwd, session_id) do
-    {configured_transcripts_dir, _source} = Runtime.transcripts_dir()
-    dir_name = transcript_dir_name(cwd)
-    candidate_roots = transcript_search_roots(configured_transcripts_dir)
+    {candidate_roots, _source} = Runtime.transcript_roots()
+    dir_name = String.replace(cwd, "/", "-")
     fallback_root = List.first(candidate_roots)
 
     transcript_root =
@@ -336,34 +273,30 @@ defmodule SpotterWeb.SessionHookController do
     Path.join([transcript_root, dir_name, "#{session_id}.jsonl"])
   end
 
-  defp transcript_search_roots(configured_transcripts_dir) do
-    configured_roots =
-      if is_binary(configured_transcripts_dir) and configured_transcripts_dir != "" do
-        [Path.expand(configured_transcripts_dir)]
-      else
-        []
-      end
-
-    (configured_roots ++ [Path.expand("~/.claude/projects")])
-    |> Enum.uniq()
-  end
-
-  defp transcript_dir_name(cwd) do
-    String.replace(cwd, "/", "-")
-  end
-
   @env Application.compile_env(:spotter, :env, :prod)
 
-  defp maybe_bootstrap_sync(_session) when @env == :test, do: :ok
+  defp maybe_bootstrap_sync(session, transcript_path) do
+    cond do
+      @env == :test ->
+        :ok
 
-  defp maybe_bootstrap_sync(session) do
-    if is_nil(session.message_count) or session.message_count == 0 do
-      trace_ctx = OtelTraceHelpers.maybe_add_trace_context(%{})
-      session_id = session.session_id
+      is_nil(session.message_count) or session.message_count == 0 ->
+        trace_ctx = OtelTraceHelpers.maybe_add_trace_context(%{})
+        session_id = session.session_id
 
-      Task.start(fn ->
-        SyncTranscripts.sync_session_by_id(session_id, trace_context: trace_ctx)
-      end)
+        sync_opts = [trace_context: trace_ctx]
+
+        sync_opts =
+          if is_binary(transcript_path) and transcript_path != "",
+            do: [{:transcript_path, transcript_path} | sync_opts],
+            else: sync_opts
+
+        Task.start(fn ->
+          SyncTranscripts.sync_session_by_id(session_id, sync_opts)
+        end)
+
+      true ->
+        :ok
     end
   rescue
     error ->

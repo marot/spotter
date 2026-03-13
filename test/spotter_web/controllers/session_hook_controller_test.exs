@@ -3,17 +3,15 @@ defmodule SpotterWeb.SessionHookControllerTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Spotter.Observability.FlowHub
-  alias Spotter.Services.ActiveSessionRegistry
+  alias Spotter.Transcripts.{Project, Session}
 
   @endpoint SpotterWeb.Endpoint
-  @active_table Spotter.Services.ActiveSessionRegistry
 
   @valid_traceparent "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
   @malformed_traceparent "not-a-valid-traceparent"
 
   setup do
     Sandbox.checkout(Spotter.Repo)
-    :ets.delete_all_objects(@active_table)
 
     if :ets.whereis(FlowHub) != :undefined do
       :ets.delete_all_objects(FlowHub)
@@ -68,15 +66,6 @@ defmodule SpotterWeb.SessionHookControllerTest do
       assert body["ok"] == true
     end
 
-    test "registers session in ActiveSessionRegistry" do
-      params = valid_params()
-      post_session_start(params)
-
-      info = ActiveSessionRegistry.status(params["session_id"])
-      assert info != nil
-      assert info.status == :active
-    end
-
     test "returns 400 for missing session_id" do
       {status, body, _conn} = post_session_start(%{"pane_id" => "%1"})
 
@@ -125,6 +114,16 @@ defmodule SpotterWeb.SessionHookControllerTest do
       assert status == 200
       assert body["ok"] == true
     end
+
+    test "broadcasts session_activity :started on success" do
+      Phoenix.PubSub.subscribe(Spotter.PubSub, "session_activity")
+
+      params = valid_params()
+      {200, %{"ok" => true}, _conn} = post_session_start(params)
+
+      assert_receive {:session_activity, %{session_id: sid, status: :started}}, 1000
+      assert sid == params["session_id"]
+    end
   end
 
   describe "POST /api/hooks/waiting-summary" do
@@ -136,32 +135,22 @@ defmodule SpotterWeb.SessionHookControllerTest do
       assert body["error"] =~ "required"
     end
 
-    test "returns 400 when transcript_path missing" do
-      {status, body, _conn} =
-        post_json("/api/hooks/waiting-summary", %{"session_id" => "abc"})
-
-      assert status == 400
-      assert body["error"] =~ "required"
-    end
-
-    test "returns 400 when both fields missing" do
+    test "returns 400 when no params" do
       {status, body, _conn} = post_json("/api/hooks/waiting-summary", %{})
 
       assert status == 400
       assert body["error"] =~ "required"
     end
 
-    test "returns 200 with fallback summary for missing transcript file" do
+    test "returns 200 with static summary when session_id provided" do
       {status, body, _conn} =
         post_json("/api/hooks/waiting-summary", %{
-          "session_id" => "test-session-123",
-          "transcript_path" => "/nonexistent/path.jsonl"
+          "session_id" => "test-session-123"
         })
 
       assert status == 200
       assert body["ok"] == true
       assert is_binary(body["summary"])
-      assert body["summary"] =~ "test-ses"
       assert is_integer(body["input_chars"])
       assert is_map(body["source_window"])
     end
@@ -203,31 +192,6 @@ defmodule SpotterWeb.SessionHookControllerTest do
     end
   end
 
-  describe "POST /api/hooks/session-end (prompt pattern scheduling disabled)" do
-    test "session_end does not enqueue prompt-pattern jobs" do
-      params = valid_params()
-      post_session_start(params)
-
-      {status, body, _conn} = post_session_end(%{"session_id" => params["session_id"]})
-
-      assert status == 200
-      assert body["ok"] == true
-
-      # No ComputePromptPatterns jobs should be enqueued
-      import Ecto.Query
-
-      jobs =
-        Spotter.Repo.all(
-          from(j in Oban.Job,
-            where: j.worker == "Spotter.Transcripts.Jobs.ComputePromptPatterns",
-            where: j.state == "available"
-          )
-        )
-
-      assert jobs == []
-    end
-  end
-
   describe "POST /api/hooks/session-end" do
     test "succeeds with valid session_id" do
       session_id = Ash.UUID.generate()
@@ -235,17 +199,6 @@ defmodule SpotterWeb.SessionHookControllerTest do
 
       assert status == 200
       assert body["ok"] == true
-    end
-
-    test "marks session as ended in registry" do
-      params = valid_params()
-      post_session_start(params)
-
-      post_session_end(%{"session_id" => params["session_id"], "reason" => "user_exit"})
-
-      info = ActiveSessionRegistry.status(params["session_id"])
-      assert info.status == :ended
-      assert info.ended_reason == "user_exit"
     end
 
     test "is idempotent for duplicate end requests" do
@@ -260,6 +213,38 @@ defmodule SpotterWeb.SessionHookControllerTest do
       assert body2["ok"] == true
     end
 
+    test "duplicate SessionEnd still sets session_ended_at" do
+      project =
+        Ash.create!(Project, %{name: "idempotent-end", pattern: "^idempotent-end$"})
+
+      session_id = Ash.UUID.generate()
+
+      Ash.create!(Session, %{
+        session_id: session_id,
+        project_id: project.id,
+        cwd: "/home/user/idempotent-end"
+      })
+
+      {200, %{"ok" => true}, _} =
+        post_session_end(%{"session_id" => session_id, "reason" => "first"})
+
+      first_session =
+        Session |> Ash.read!() |> Enum.find(&(&1.session_id == session_id))
+
+      first_ended_at = first_session.session_ended_at
+      assert first_ended_at != nil
+
+      Process.sleep(10)
+
+      {200, %{"ok" => true}, _} =
+        post_session_end(%{"session_id" => session_id, "reason" => "second"})
+
+      second_session =
+        Session |> Ash.read!() |> Enum.find(&(&1.session_id == session_id))
+
+      assert second_session.session_ended_at != nil
+    end
+
     test "handles unknown session without crashing" do
       {status, body, _conn} =
         post_session_end(%{"session_id" => Ash.UUID.generate()})
@@ -268,15 +253,30 @@ defmodule SpotterWeb.SessionHookControllerTest do
       assert body["ok"] == true
     end
 
-    test "handles missing optional fields gracefully" do
+    test "marks an existing session as ended" do
+      project =
+        Ash.create!(Project, %{name: "session-end-project", pattern: "^session-end-project$"})
+
       session_id = Ash.UUID.generate()
-      {status, body, _conn} = post_session_end(%{"session_id" => session_id})
+
+      Ash.create!(Session, %{
+        session_id: session_id,
+        project_id: project.id,
+        cwd: "/home/user/session-end-project"
+      })
+
+      {status, body, _conn} =
+        post_session_end(%{"session_id" => session_id, "reason" => "clear"})
 
       assert status == 200
       assert body["ok"] == true
 
-      info = ActiveSessionRegistry.status(session_id)
-      assert info.ended_reason == nil
+      ended_session =
+        Session
+        |> Ash.read!()
+        |> Enum.find(&(&1.session_id == session_id))
+
+      assert ended_session.session_ended_at != nil
     end
 
     test "returns 400 for missing session_id" do

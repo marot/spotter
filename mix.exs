@@ -27,6 +27,7 @@ defmodule Spotter.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:claude, "~> 0.5", only: [:dev], runtime: false},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:oban, "~> 2.0"},
       {:open_api_spex, "~> 3.0"},
@@ -53,10 +54,10 @@ defmodule Spotter.MixProject do
       {:opentelemetry_exporter, "~> 1.10"},
       {:opentelemetry_bandit, "~> 0.3"},
       {:opentelemetry_phoenix, "~> 2.0"},
+      {:opentelemetry_telemetry, "~> 1.1"},
       {:opentelemetry_ash, "~> 0.1"},
       {:myxql, "~> 0.8"},
-      # TODO: Switch back to Hex once upstream merges transport_stderr fix
-      {:claude_agent_sdk, path: "vendor/claude_agent_sdk", override: true}
+      {:sentry, "~> 11.0"}
     ]
   end
 

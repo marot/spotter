@@ -5,7 +5,6 @@ import Config
 # SPOTTER_SUMMARY_TOKEN_BUDGET - character budget for transcript slicing (default: 4000)
 # SPOTTER_WAITING_DELAY_SECONDS - delay before showing overlay (default: 300)
 # SPOTTER_OVERLAY_HEIGHT - tmux popup height in lines (default: 16)
-# SPOTTER_ANTHROPIC_API_KEY - required for LLM-based summaries
 #
 # Session distillation configuration
 # SPOTTER_SESSION_DISTILL_MODEL - LLM model for session distillation (default: claude-3-5-haiku-latest)
@@ -17,6 +16,10 @@ import Config
 # SPOTTER_PROJECT_ROLLUP_DISTILL_TIMEOUT_MS - Project rollup distillation timeout in ms (default: 45000)
 # SPOTTER_ROLLUP_BUCKET_KIND - bucket granularity: day, week, or month (default: week)
 # SPOTTER_ROLLUP_LOOKBACK_DAYS - rolling summary lookback window in days (default: 30)
+
+if dsn = System.get_env("SENTRY_DSN") do
+  config :sentry, dsn: dsn
+end
 
 # Product Spec (Dolt) configuration
 config :spotter, Spotter.ProductSpec.Repo,

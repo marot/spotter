@@ -2,16 +2,16 @@ defmodule SpotterWeb.Telemetry.LiveviewOtel do
   @moduledoc """
   Telemetry handler that creates OpenTelemetry spans for LiveView lifecycle events.
 
-  Attaches to Phoenix LiveView telemetry events and creates spans for mount,
-  handle_params, and handle_event callbacks.
+  Uses `OpentelemetryTelemetry` to manage span context via a tracer stack,
+  preventing context leaks between sequential LiveView callbacks.
   """
 
   require Logger
-  require OpenTelemetry.Tracer, as: Tracer
 
   alias Spotter.Observability.ErrorReport
 
-  @handler_id __MODULE__
+  @handler_id "spotter.telemetry.liveview_otel"
+  @tracer_id @handler_id
 
   @events [
     [:phoenix, :live_view, :mount, :start],
@@ -33,6 +33,9 @@ defmodule SpotterWeb.Telemetry.LiveviewOtel do
   @spec setup() :: :ok
   def setup do
     :telemetry.detach(@handler_id)
+    # Detach OpentelemetryPhoenix's built-in LiveView handler to avoid
+    # conflicting span context management on the same telemetry events
+    :telemetry.detach({OpentelemetryPhoenix, :live_view})
     :telemetry.attach_many(@handler_id, @events, &__MODULE__.handle_event/4, %{})
     :ok
   rescue
@@ -50,7 +53,10 @@ defmodule SpotterWeb.Telemetry.LiveviewOtel do
       ) do
     span_name = "spotter.liveview.#{action}"
     attrs = build_attributes(action, metadata)
-    Tracer.start_span(span_name, %{attributes: attrs})
+
+    OpentelemetryTelemetry.start_telemetry_span(@tracer_id, span_name, metadata, %{
+      attributes: attrs
+    })
   rescue
     _error -> :ok
   end
@@ -58,10 +64,10 @@ defmodule SpotterWeb.Telemetry.LiveviewOtel do
   def handle_event(
         [:phoenix, :live_view, _action, :stop],
         _measurements,
-        _metadata,
+        metadata,
         _config
       ) do
-    Tracer.end_span()
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   rescue
     _error -> :ok
   end
@@ -72,15 +78,20 @@ defmodule SpotterWeb.Telemetry.LiveviewOtel do
         metadata,
         _config
       ) do
-    reason = Map.get(metadata, :kind, :error)
+    reason = Map.get(metadata, :reason)
+
+    message =
+      if is_exception(reason),
+        do: Exception.message(reason),
+        else: to_string(Map.get(metadata, :kind, :error))
 
     ErrorReport.set_trace_error(
       "liveview_exception",
-      to_string(reason),
+      message,
       "telemetry.liveview_otel"
     )
 
-    Tracer.end_span()
+    OpentelemetryTelemetry.end_telemetry_span(@tracer_id, metadata)
   rescue
     _error -> :ok
   end

@@ -1,7 +1,16 @@
 import Config
 
-# Disable trace exporting during tests to avoid noise
-config :opentelemetry, traces_exporter: :none
+# Use simple processor in tests so individual tests can capture spans via
+# :otel_simple_processor.set_exporter(:otel_exporter_pid, self())
+config :opentelemetry,
+  traces_exporter: :none,
+  processors: [
+    {:otel_simple_processor, %{exporter: {:otel_exporter_pid, :undefined}}}
+  ]
+
+# Disable Ash auto-tracing in tests to prevent OTel simple processor contention
+# (Ash spans serialize exports and block manual span assertions)
+config :ash, tracer: []
 
 config :spotter, Oban, testing: :manual
 config :logger, level: :warning
@@ -19,17 +28,7 @@ config :spotter, SpotterWeb.Endpoint,
 
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
-config :claude_agent_sdk,
-  use_mock: true,
-  task_supervisor_strict: true,
-  tool_execution_timeout_ms: 5_000,
-  timeout_ms: 30_000
-
 # Bound SSE stream duration so GET /api/mcp tests return quickly
 config :spotter, SpotterWeb.SpotterMcpPlug,
   sse_keepalive_ms: 10,
   sse_max_duration_ms: 25
-
-# Dolt repos - use a test-friendly pool size
-config :spotter, Spotter.ProductSpec.Repo, pool_size: 2
-config :spotter, Spotter.TestSpec.Repo, pool_size: 2

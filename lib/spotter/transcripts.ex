@@ -77,34 +77,10 @@ defmodule Spotter.Transcripts do
         get :read
         index :read
       end
-
-      base_route "/commit_hotspots", Spotter.Transcripts.CommitHotspot do
-        get :read
-        index :read
-      end
-
-      base_route "/prompt_pattern_runs", Spotter.Transcripts.PromptPatternRun do
-        get :read
-        index :read
-      end
-
-      base_route "/prompt_patterns", Spotter.Transcripts.PromptPattern do
-        get :read
-        index :read
-      end
-
-      base_route "/prompt_pattern_matches", Spotter.Transcripts.PromptPatternMatch do
-        get :read
-        index :read
-      end
     end
   end
 
   tools do
-    tool :list_sessions, Spotter.Transcripts.Session, :mcp_list do
-      description "List sessions for the current project (scoped by MCP project context)."
-    end
-
     tool :list_review_annotations, Spotter.Transcripts.Annotation, :mcp_read_review_annotations do
       description "List review annotations for the current project (filter by state/session_id; includes refs)."
       load [:subagent, :file_refs, message_refs: [:message]]
@@ -112,6 +88,14 @@ defmodule Spotter.Transcripts do
 
     tool :resolve_annotation, Spotter.Transcripts.Annotation, :mcp_resolve do
       description "Resolve a review annotation. `resolution` is a required, non-empty resolution note (1-3 sentences) that will be displayed in the Spotter web UI under Resolved annotations."
+    end
+
+    tool :create_hotspot, Spotter.Transcripts.CommitHotspot, :mcp_create do
+      description "Create a code hotspot for a commit. Requires commit_id, relative_path, line_start, line_end, snippet, reason, and overall_score (0-100). Project is auto-scoped via MCP context."
+    end
+
+    tool :submit_retro, Spotter.Transcripts.RetroSubmission, :mcp_submit do
+      description "Submit a session retrospective. Provide session_id, optional summary (one sentence), and items array. Each item: category (knowledge_gained|effective_strategy|gotcha|requirements_clarity|struggle), observation (what happened), explanation (why it matters). Project auto-scoped."
     end
   end
 
@@ -134,19 +118,14 @@ defmodule Spotter.Transcripts do
     resource Spotter.Transcripts.CommitHotspot
     resource Spotter.Transcripts.CommitFile
     resource Spotter.Transcripts.AnnotationFileRef
-    resource Spotter.Transcripts.CommitHotspot
-    resource Spotter.Transcripts.Flashcard
-    resource Spotter.Transcripts.ReviewItem
     resource Spotter.Transcripts.ProjectIngestState
-    resource Spotter.Transcripts.PromptPatternRun
-    resource Spotter.Transcripts.PromptPattern
-    resource Spotter.Transcripts.PromptPatternMatch
-    resource Spotter.Transcripts.SessionDistillation
-    resource Spotter.Transcripts.ProjectPeriodSummary
-    resource Spotter.Transcripts.ProjectRollingSummary
-    resource Spotter.Transcripts.TestCase
-    resource Spotter.Transcripts.CommitTestRun
-    resource Spotter.Transcripts.SpecTestLink
-    resource Spotter.ProductSpec.RollingSpecRun
+    resource Spotter.Transcripts.Team
+    resource Spotter.Transcripts.TeamMember
+    resource Spotter.Transcripts.ComputedLaneCache
+    resource Spotter.Transcripts.RawHookEvent
+    resource Spotter.Transcripts.RetroSubmission
+    resource Spotter.Transcripts.RetroItem
+    resource Spotter.Transcripts.ShellCommandEvent
+    resource Spotter.Transcripts.InstructionsLoadedEvent
   end
 end

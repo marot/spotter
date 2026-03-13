@@ -3,19 +3,14 @@ defmodule SpotterWeb.SessionLive do
   use AshComputer.LiveView
 
   require Logger
+  require OpenTelemetry.Tracer, as: Tracer
 
   import SpotterWeb.TranscriptComponents
   import SpotterWeb.AnnotationComponents
+  import SpotterWeb.LanesComponents
 
-  alias Spotter.Services.{
-    ExplainAnnotations,
-    ReviewSessionRegistry,
-    ReviewUpdates,
-    SessionRegistry,
-    Tmux,
-    TranscriptFileLinks,
-    TranscriptSync
-  }
+  alias Spotter.Services.{ReviewUpdates, TranscriptFileLinks, TranscriptTaskActions}
+  alias Spotter.Transcripts.ParallelLanes
 
   alias Spotter.Transcripts.{
     Annotation,
@@ -27,6 +22,7 @@ defmodule SpotterWeb.SessionLive do
     SessionCommitLink,
     SessionRework,
     Subagent,
+    Team,
     ToolCall
   }
 
@@ -34,27 +30,11 @@ defmodule SpotterWeb.SessionLive do
 
   attach_computer(SpotterWeb.Live.TranscriptComputers, :transcript_view)
 
-  @review_heartbeat_interval 10_000
-
   @impl true
   def mount(%{"session_id" => session_id}, _session, socket) do
-    {pane_id, review_session_name} = find_pane_with_review_info(session_id)
-
-    {cols, rows} = pane_dimensions(pane_id)
-
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Spotter.PubSub, "pane_sessions")
       Phoenix.PubSub.subscribe(Spotter.PubSub, "session_activity")
       Phoenix.PubSub.subscribe(Spotter.PubSub, "session_transcripts:#{session_id}")
-
-      if is_nil(pane_id) do
-        Process.send_after(self(), :check_pane, 1_000)
-      end
-
-      if review_session_name do
-        ReviewSessionRegistry.register(review_session_name)
-        Process.send_after(self(), :review_heartbeat, @review_heartbeat_interval)
-      end
     end
 
     {session_record, messages} = load_session_data(session_id)
@@ -69,21 +49,13 @@ defmodule SpotterWeb.SessionLive do
     socket =
       socket
       |> assign(
-        pane_id: pane_id,
         session_id: session_id,
         session_status: nil,
         session_record: session_record,
-        review_session_name: review_session_name,
-        cols: cols,
-        rows: rows,
         annotations: annotations,
         selected_text: nil,
         selection_source: nil,
         selection_message_ids: [],
-        selection_start_row: nil,
-        selection_start_col: nil,
-        selection_end_row: nil,
-        selection_end_col: nil,
         errors: errors,
         rework_events: rework_events,
         commit_links: commit_links,
@@ -94,69 +66,24 @@ defmodule SpotterWeb.SessionLive do
         active_sidebar_tab: :commits,
         explain_streams: %{},
         transcript_link_project_id: link_project_id,
-        transcript_link_fileset: link_fileset
+        transcript_link_fileset: link_fileset,
+        view_mode: :list,
+        lanes: [],
+        active_lane_index: 0,
+        timeline: nil,
+        overlaps: [],
+        message_links: [],
+        rows: [],
+        expanded_messages: %{}
       )
       |> mount_computers(%{
         transcript_view: %{messages: messages, session_cwd: session_cwd}
       })
 
-    rendered_lines = socket.assigns.transcript_view_rendered_lines
-    {breakpoint_map, anchors} = compute_sync_data(pane_id, rendered_lines)
-
-    socket =
-      socket
-      |> assign(breakpoint_map: breakpoint_map, anchors: anchors)
-      |> push_sync_events()
-
     {:ok, socket}
   end
 
   @impl true
-  def terminate(_reason, socket) do
-    if name = socket.assigns[:review_session_name] do
-      ReviewSessionRegistry.deregister(name)
-    end
-
-    :ok
-  end
-
-  @impl true
-  def handle_info(:check_pane, socket) do
-    case find_pane_with_review_info(socket.assigns.session_id) do
-      {nil, _} ->
-        Process.send_after(self(), :check_pane, 1_000)
-        {:noreply, socket}
-
-      {pane_id, review_session_name} ->
-        {cols, rows} = pane_dimensions(pane_id)
-
-        socket =
-          socket
-          |> maybe_start_heartbeat(review_session_name)
-          |> assign(pane_id: pane_id, cols: cols, rows: rows)
-          |> recompute_and_push_sync()
-
-        {:noreply, socket}
-    end
-  end
-
-  def handle_info({:session_registered, _pane_id, session_id}, socket) do
-    if session_id == socket.assigns.session_id and is_nil(socket.assigns.pane_id) do
-      {pane_id, review_session_name} = find_pane_with_review_info(session_id)
-      {cols, rows} = pane_dimensions(pane_id)
-
-      socket =
-        socket
-        |> maybe_start_heartbeat(review_session_name)
-        |> assign(pane_id: pane_id, cols: cols, rows: rows)
-        |> recompute_and_push_sync()
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
-  end
-
   def handle_info({:session_activity, %{session_id: sid, status: status}}, socket) do
     if sid == socket.assigns.session_id do
       {:noreply, assign(socket, session_status: status)}
@@ -171,15 +98,6 @@ defmodule SpotterWeb.SessionLive do
     else
       {:noreply, socket}
     end
-  end
-
-  def handle_info(:review_heartbeat, socket) do
-    if name = socket.assigns[:review_session_name] do
-      ReviewSessionRegistry.heartbeat(name)
-      Process.send_after(self(), :review_heartbeat, @review_heartbeat_interval)
-    end
-
-    {:noreply, socket}
   end
 
   def handle_info({:annotation_explain_delta, id, chunk}, socket) do
@@ -211,36 +129,13 @@ defmodule SpotterWeb.SessionLive do
   end
 
   @impl true
-  def handle_event("text_selected", params, socket) do
-    current_msg_id = socket.assigns.current_message_id
-
-    socket =
-      socket
-      |> assign(
-        selected_text: params["text"],
-        selection_source: :terminal,
-        selection_message_ids: if(current_msg_id, do: [current_msg_id], else: []),
-        selection_start_row: params["start_row"],
-        selection_start_col: params["start_col"],
-        selection_end_row: params["end_row"],
-        selection_end_col: params["end_col"]
-      )
-      |> maybe_focus_annotations_tab()
-
-    {:noreply, socket}
-  end
-
   def handle_event("transcript_text_selected", params, socket) do
     socket =
       socket
       |> assign(
         selected_text: params["text"],
         selection_source: :transcript,
-        selection_message_ids: params["message_ids"] || [],
-        selection_start_row: nil,
-        selection_start_col: nil,
-        selection_end_row: nil,
-        selection_end_col: nil
+        selection_message_ids: params["message_ids"] || []
       )
       |> maybe_focus_annotations_tab()
 
@@ -252,27 +147,19 @@ defmodule SpotterWeb.SessionLive do
      assign(socket,
        selected_text: nil,
        selection_source: nil,
-       selection_message_ids: [],
-       selection_start_row: nil,
-       selection_start_col: nil,
-       selection_end_row: nil,
-       selection_end_col: nil
+       selection_message_ids: []
      )}
   end
 
   def handle_event("save_annotation", params, socket) do
     comment = params["comment"] || ""
     purpose = if params["purpose"] == "explain", do: :explain, else: :review
-    source = socket.assigns.selection_source || :terminal
+    source = socket.assigns.selection_source || :transcript
 
     create_params = %{
       session_id: socket.assigns.session_record.id,
       source: source,
       selected_text: socket.assigns.selected_text,
-      start_row: socket.assigns.selection_start_row,
-      start_col: socket.assigns.selection_start_col,
-      end_row: socket.assigns.selection_end_row,
-      end_col: socket.assigns.selection_end_col,
       comment: comment,
       purpose: purpose
     }
@@ -313,7 +200,7 @@ defmodule SpotterWeb.SessionLive do
 
   def handle_event("highlight_annotation", %{"id" => id}, socket) do
     case Ash.get(Annotation, id, load: [message_refs: :message]) do
-      {:ok, %{source: :transcript, message_refs: refs}} when refs != [] ->
+      {:ok, %{message_refs: refs}} when refs != [] ->
         message_ids = refs |> Enum.sort_by(& &1.ordinal) |> Enum.map(& &1.message.id)
 
         socket =
@@ -322,15 +209,6 @@ defmodule SpotterWeb.SessionLive do
           |> push_event("highlight_transcript_annotation", %{message_ids: message_ids})
 
         {:noreply, socket}
-
-      {:ok, ann} when not is_nil(ann.start_row) ->
-        {:noreply,
-         push_event(socket, "highlight_annotation", %{
-           start_row: ann.start_row,
-           start_col: ann.start_col,
-           end_row: ann.end_row,
-           end_col: ann.end_col
-         })}
 
       _ ->
         {:noreply, socket}
@@ -355,6 +233,173 @@ defmodule SpotterWeb.SessionLive do
     {:noreply, assign(socket, active_sidebar_tab: String.to_existing_atom(tab))}
   end
 
+  def handle_event("switch_view_mode", %{"mode" => "lanes"}, socket) do
+    Tracer.with_span "spotter.session_live.switch_view_mode" do
+      Tracer.set_attribute("view_mode", "lanes")
+      {:noreply, socket |> assign(view_mode: :lanes) |> load_lanes_data()}
+    end
+  end
+
+  def handle_event("switch_view_mode", %{"mode" => "list"}, socket) do
+    Tracer.with_span "spotter.session_live.switch_view_mode" do
+      Tracer.set_attribute("view_mode", "list")
+      {:noreply, assign(socket, view_mode: :list)}
+    end
+  end
+
+  def handle_event("switch_view_mode", _params, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event("switch_lane", %{"index" => idx_str}, socket) do
+    case Integer.parse(idx_str) do
+      {idx, ""} when idx >= 0 and idx < length(socket.assigns.lanes) ->
+        {:noreply, assign(socket, active_lane_index: idx)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("reorder_lanes", %{"order" => order}, socket) when is_list(order) do
+    lanes = socket.assigns.lanes
+
+    # Build a lookup from session_id to lane
+    lane_by_session_id =
+      Map.new(lanes, fn lane ->
+        sid = lane.session && lane.session.session_id
+        {sid, lane}
+      end)
+
+    # Reorder lanes according to the new order, skipping unknown session_ids
+    reordered =
+      order
+      |> Enum.flat_map(fn sid ->
+        case Map.get(lane_by_session_id, sid) do
+          nil -> []
+          lane -> [lane]
+        end
+      end)
+
+    # If reordering produced a valid list with the same count, apply it
+    if length(reordered) == length(lanes) do
+      {:noreply, assign(socket, lanes: reordered, active_lane_index: 0)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("reorder_lanes", _params, socket), do: {:noreply, socket}
+
+  def handle_event("reset_column_order", _params, socket) do
+    lanes = socket.assigns.lanes
+    # Re-sort lanes by started_at (original order from ParallelLanes.compute)
+    sorted =
+      Enum.sort_by(lanes, & &1.started_at, fn
+        nil, nil -> true
+        nil, _ -> false
+        _, nil -> true
+        a, b -> DateTime.compare(a, b) != :gt
+      end)
+
+    {:noreply,
+     socket
+     |> assign(lanes: sorted, active_lane_index: 0)
+     |> push_event("reset_column_order", %{})}
+  end
+
+  def handle_event("toggle_message_expand", %{"message-id" => msg_id}, socket)
+      when is_binary(msg_id) and byte_size(msg_id) < 256 do
+    expanded = socket.assigns.expanded_messages
+    new_expanded = Map.update(expanded, msg_id, true, &(!&1))
+    {:noreply, assign(socket, expanded_messages: new_expanded)}
+  end
+
+  def handle_event("toggle_message_expand", _params, socket), do: {:noreply, socket}
+
+  def handle_event("expand_all", _params, socket) do
+    all_ids = collect_message_ids(socket.assigns.rows)
+    expanded = Map.new(all_ids, &{&1, true})
+    {:noreply, assign(socket, expanded_messages: expanded)}
+  end
+
+  def handle_event("collapse_all", _params, socket) do
+    {:noreply, assign(socket, expanded_messages: %{})}
+  end
+
+  def handle_event("collapse_idle", _params, socket) do
+    {:noreply, socket}
+  end
+
+  defp collect_message_ids(rows) do
+    rows
+    |> Enum.flat_map(fn row ->
+      row.cells
+      |> Map.values()
+      |> Enum.flat_map(fn
+        %{id: id} when not is_nil(id) -> [id]
+        %{uuid: uuid} when not is_nil(uuid) -> [uuid]
+        _ -> []
+      end)
+    end)
+  end
+
+  defp load_lanes_data(socket) do
+    team_name = socket.assigns.session_record && socket.assigns.session_record.team_name
+
+    # Socket-level memoization: skip recompute if already loaded for this team
+    cached_team_id = socket.assigns[:lanes_team_id]
+
+    case team_name && Team |> Ash.Query.filter(name == ^team_name) |> Ash.read_one() do
+      {:ok, %Team{} = team} when team.id == cached_team_id ->
+        socket
+
+      {:ok, %Team{} = team} ->
+        case load_lanes_result(team.id) do
+          {:ok, %{lanes: lanes} = result} ->
+            assign(socket,
+              lanes_team_id: team.id,
+              lanes: lanes,
+              timeline: result.timeline,
+              overlaps: result.overlaps,
+              message_links: Map.get(result, :message_links, []),
+              received_link_targets: Map.get(result, :received_link_targets, %{}),
+              rows: Map.get(result, :rows, [])
+            )
+
+          _ ->
+            assign(socket,
+              lanes_team_id: nil,
+              lanes: [],
+              timeline: nil,
+              overlaps: [],
+              message_links: [],
+              received_link_targets: %{},
+              rows: []
+            )
+        end
+
+      _ ->
+        assign(socket,
+          lanes_team_id: nil,
+          lanes: [],
+          timeline: nil,
+          overlaps: [],
+          message_links: [],
+          received_link_targets: %{},
+          rows: []
+        )
+    end
+  end
+
+  # Try DB cache first, fall back to live computation.
+  defp load_lanes_result(team_id) do
+    case ParallelLanes.load_cached(team_id) do
+      {:ok, _result} = hit -> hit
+      {:miss, nil} -> ParallelLanes.compute(team_id)
+    end
+  end
+
   defp maybe_focus_annotations_tab(socket) do
     if socket.assigns.active_sidebar_tab != :annotations do
       socket
@@ -365,52 +410,12 @@ defmodule SpotterWeb.SessionLive do
     end
   end
 
-  defp jump_to_tool_use(socket, tool_use_id) do
-    line_index =
-      Enum.find_index(socket.assigns.transcript_view_rendered_lines, fn line ->
-        line[:tool_use_id] == tool_use_id
-      end)
-
-    if line_index do
-      push_event(socket, "scroll_to_transcript_line", %{index: line_index})
-    else
-      socket
-    end
+  defp jump_to_tool_use(socket, tool_use_id) when is_binary(tool_use_id) and tool_use_id != "" do
+    marker_id = TranscriptTaskActions.marker_id(tool_use_id)
+    push_event(socket, "scroll_to_transcript_marker", %{marker_id: marker_id})
   end
 
-  defp compute_sync_data(nil, _rendered_lines), do: {[], []}
-
-  defp compute_sync_data(pane_id, rendered_lines) do
-    case Tmux.capture_pane(pane_id) do
-      {:ok, capture} ->
-        terminal_lines = TranscriptSync.prepare_terminal_lines(capture)
-        anchors = TranscriptSync.find_anchors(rendered_lines, terminal_lines)
-        breakpoint_map = TranscriptSync.interpolate(anchors, length(terminal_lines))
-        {breakpoint_map, anchors}
-
-      {:error, _} ->
-        {[], []}
-    end
-  end
-
-  defp push_sync_events(socket) do
-    if connected?(socket) and socket.assigns.breakpoint_map != [] do
-      socket
-      |> push_event("breakpoint_map", %{entries: socket.assigns.breakpoint_map})
-      |> push_event("debug_anchors", %{anchors: socket.assigns.anchors})
-    else
-      socket
-    end
-  end
-
-  defp recompute_and_push_sync(socket) do
-    {breakpoint_map, anchors} =
-      compute_sync_data(socket.assigns.pane_id, socket.assigns.transcript_view_rendered_lines)
-
-    socket
-    |> assign(breakpoint_map: breakpoint_map, anchors: anchors)
-    |> push_sync_events()
-  end
+  defp jump_to_tool_use(socket, _tool_use_id), do: socket
 
   defp create_message_refs(annotation, socket) do
     message_ids =
@@ -442,51 +447,6 @@ defmodule SpotterWeb.SessionLive do
     Enum.filter(ids, &MapSet.member?(valid_ids, &1))
   end
 
-  defp find_pane_with_review_info(session_id) do
-    case SessionRegistry.get_pane_id(session_id) do
-      nil -> find_review_pane(session_id)
-      pane_id -> {pane_id, nil}
-    end
-  end
-
-  defp find_review_pane(session_id) do
-    review_name = "spotter-review-#{String.slice(session_id, 0, 8)}"
-
-    with {:ok, panes} <- Tmux.list_panes(),
-         %{pane_id: pane_id} <- Enum.find(panes, &(&1.session_name == review_name)) do
-      {pane_id, review_name}
-    else
-      _ -> {nil, nil}
-    end
-  end
-
-  defp maybe_start_heartbeat(socket, nil), do: socket
-
-  defp maybe_start_heartbeat(socket, review_session_name) do
-    if is_nil(socket.assigns[:review_session_name]) do
-      ReviewSessionRegistry.register(review_session_name)
-      Process.send_after(self(), :review_heartbeat, @review_heartbeat_interval)
-      assign(socket, review_session_name: review_session_name)
-    else
-      socket
-    end
-  end
-
-  defp pane_dimensions(nil), do: {80, 24}
-
-  defp pane_dimensions(pane_id) do
-    case Tmux.list_panes() do
-      {:ok, panes} ->
-        case Enum.find(panes, &(&1.pane_id == pane_id)) do
-          %{pane_width: w, pane_height: h} -> {w, h}
-          _ -> {80, 24}
-        end
-
-      _ ->
-        {80, 24}
-    end
-  end
-
   defp reload_transcript(socket) do
     session_id = socket.assigns.session_id
     {session_record, messages} = load_session_data(session_id)
@@ -498,28 +458,20 @@ defmodule SpotterWeb.SessionLive do
     rework_events = load_rework_events(session_record)
     commit_links = load_commit_links(session_id)
 
-    socket =
-      socket
-      |> assign(
-        session_record: session_record,
-        errors: errors,
-        rework_events: rework_events,
-        commit_links: commit_links,
-        subagent_labels: load_subagent_labels(session_record),
-        transcript_link_project_id: link_project_id,
-        transcript_link_fileset: link_fileset
-      )
-      |> update_computer_inputs(:transcript_view, %{
-        messages: messages,
-        session_cwd: session_cwd
-      })
-
-    rendered_lines = socket.assigns.transcript_view_rendered_lines
-    {breakpoint_map, anchors} = compute_sync_data(socket.assigns.pane_id, rendered_lines)
-
     socket
-    |> assign(breakpoint_map: breakpoint_map, anchors: anchors)
-    |> push_sync_events()
+    |> assign(
+      session_record: session_record,
+      errors: errors,
+      rework_events: rework_events,
+      commit_links: commit_links,
+      subagent_labels: load_subagent_labels(session_record),
+      transcript_link_project_id: link_project_id,
+      transcript_link_fileset: link_fileset
+    )
+    |> update_computer_inputs(:transcript_view, %{
+      messages: messages,
+      session_cwd: session_cwd
+    })
   end
 
   defp resolve_file_link_context(nil), do: {nil, nil}
@@ -601,35 +553,7 @@ defmodule SpotterWeb.SessionLive do
     |> Ash.read!()
   end
 
-  defp maybe_enqueue_explain(socket, annotation, :explain) do
-    # Subscribe BEFORE enqueue to prevent race: if the job completes before
-    # subscription, the done broadcast would be missed, leaving UI stuck streaming.
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(
-        Spotter.PubSub,
-        ExplainAnnotations.topic(annotation.id)
-      )
-    end
-
-    streams = Map.put(socket.assigns.explain_streams, annotation.id, "")
-    socket = assign(socket, explain_streams: streams)
-
-    case explain_annotations_module().enqueue(annotation.id) do
-      {:ok, _job} ->
-        socket
-
-      {:error, _reason} ->
-        socket
-        |> assign(explain_streams: Map.delete(socket.assigns.explain_streams, annotation.id))
-        |> put_flash(:error, "Could not start explanation job.")
-    end
-  end
-
   defp maybe_enqueue_explain(socket, _annotation, _purpose), do: socket
-
-  defp explain_annotations_module do
-    Application.get_env(:spotter, :explain_annotations_module, ExplainAnnotations)
-  end
 
   defp load_annotations(nil), do: []
 
@@ -668,63 +592,92 @@ defmodule SpotterWeb.SessionLive do
         <a href="/">Dashboard</a>
         <span class="breadcrumb-sep">/</span>
         <span class="breadcrumb-current">Session {String.slice(@session_id, 0..7)}</span>
-        <span :if={@pane_id} class="breadcrumb-meta">
-          Pane: {@pane_id}
-        </span>
         <span :if={@session_status} class={"badge session-status-#{@session_status}"}>
           {@session_status}
         </span>
       </div>
+      <div :if={@session_record && @session_record.team_name} data-testid="view-mode-toggle" style="display: flex; gap: var(--space-1); margin-bottom: var(--space-2);">
+        <button phx-click="switch_view_mode" phx-value-mode="list" class={"lanes-tab#{if @view_mode == :list, do: " is-active", else: ""}"}>
+          List
+        </button>
+        <button phx-click="switch_view_mode" phx-value-mode="lanes" class={"lanes-tab#{if @view_mode == :lanes, do: " is-active", else: ""}"}>
+          Lanes
+        </button>
+      </div>
       <.distilled_summary_section session_record={@session_record} />
       <div class="session-layout">
-        <div class="session-terminal">
-          <div class="session-terminal-inner">
-            <%= if @pane_id do %>
-              <div
-                id="terminal"
-                phx-hook="Terminal"
-                data-pane-id={@pane_id}
-                data-cols={@cols}
-                data-rows={@rows}
-                phx-update="ignore"
-                class="terminal-container"
-              >
-              </div>
+        <%= if @view_mode == :lanes do %>
+          <.lanes_panel
+            lanes={@lanes}
+            rows={@rows}
+            timeline={@timeline}
+            message_links={@message_links}
+            active_lane_index={@active_lane_index}
+            expanded_messages={@expanded_messages}
+            session_id={@session_id}
+            received_link_targets={@received_link_targets}
+          />
+        <% else %>
+          <div id="transcript-panel" class="session-transcript" data-testid="transcript-container">
+            <div class="transcript-header">
+              <h3>Transcript</h3>
+              <span class={"transcript-header-hint#{if @transcript_view_show_debug, do: " debug-active", else: ""}"}>
+                <%= if @transcript_view_show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug" %>
+              </span>
+            </div>
+
+            <%= if @transcript_view_task_actions == [] do %>
+              <.transcript_panel
+                rendered_lines={@transcript_view_visible_lines}
+                all_rendered_lines={@transcript_view_rendered_lines}
+                expanded_tool_groups={@transcript_view_expanded_tool_groups}
+                expanded_hook_groups={@transcript_view_expanded_hook_groups}
+                current_message_id={@current_message_id}
+                clicked_subagent={@clicked_subagent}
+                session_id={@session_id}
+                subagent_labels={@subagent_labels}
+                show_debug={@transcript_view_show_debug}
+                project_id={@transcript_link_project_id}
+                existing_files={@transcript_link_fileset}
+                empty_message="No transcript available for this session."
+              />
             <% else %>
-              <div class="terminal-connecting">
-                <div>
-                  <div class="terminal-connecting-title">Connecting to session...</div>
-                  <div class="terminal-connecting-subtitle">Waiting for terminal to be ready</div>
+              <div
+                id="transcript-shell"
+                class="transcript-shell"
+                phx-hook="TranscriptTaskRail"
+                data-task-actions={encode_task_actions(@transcript_view_task_actions)}
+              >
+                <aside class="transcript-task-rail" data-testid="transcript-task-rail">
+                  <div class="task-rail-heading">
+                    <h4>Task list</h4>
+                    <span class="task-rail-count" data-task-rail-count>0</span>
+                  </div>
+                  <p class="task-rail-subtitle" data-task-rail-subtitle>
+                    Scroll the transcript to replay task updates.
+                  </p>
+                  <ol class="task-rail-list" data-task-rail-list></ol>
+                </aside>
+                <div class="transcript-shell-main">
+                  <.transcript_panel
+                    rendered_lines={@transcript_view_visible_lines}
+                    all_rendered_lines={@transcript_view_rendered_lines}
+                    expanded_tool_groups={@transcript_view_expanded_tool_groups}
+                    expanded_hook_groups={@transcript_view_expanded_hook_groups}
+                    current_message_id={@current_message_id}
+                    clicked_subagent={@clicked_subagent}
+                    session_id={@session_id}
+                    subagent_labels={@subagent_labels}
+                    show_debug={@transcript_view_show_debug}
+                    project_id={@transcript_link_project_id}
+                    existing_files={@transcript_link_fileset}
+                    empty_message="No transcript available for this session."
+                  />
                 </div>
               </div>
             <% end %>
           </div>
-        </div>
-
-        <div id="transcript-panel" class="session-transcript" data-testid="transcript-container">
-          <div class="transcript-header">
-            <h3>Transcript</h3>
-            <span class={"transcript-header-hint#{if @transcript_view_show_debug, do: " debug-active", else: ""}"}>
-              <%= if @transcript_view_show_debug, do: "DEBUG ON", else: "Ctrl+Shift+D: debug" %>
-            </span>
-          </div>
-
-          <.transcript_panel
-            rendered_lines={@transcript_view_visible_lines}
-            all_rendered_lines={@transcript_view_rendered_lines}
-            expanded_tool_groups={@transcript_view_expanded_tool_groups}
-            expanded_hook_groups={@transcript_view_expanded_hook_groups}
-            current_message_id={@current_message_id}
-            clicked_subagent={@clicked_subagent}
-            session_id={@session_id}
-            subagent_labels={@subagent_labels}
-            show_debug={@transcript_view_show_debug}
-            anchors={@anchors}
-            project_id={@transcript_link_project_id}
-            existing_files={@transcript_link_fileset}
-            empty_message="No transcript available for this session."
-          />
-        </div>
+        <% end %>
         <div class="session-sidebar">
         <div class="sidebar-tabs">
           <button
@@ -797,7 +750,7 @@ defmodule SpotterWeb.SessionLive do
           <.annotation_cards
             annotations={@annotations}
             explain_streams={@explain_streams}
-            empty_message="Select text in terminal or transcript to add annotations."
+            empty_message="Select text in the transcript to add annotations."
           />
         </div>
 
@@ -903,5 +856,9 @@ defmodule SpotterWeb.SessionLive do
       _ ->
         []
     end
+  end
+
+  defp encode_task_actions(task_actions) do
+    Jason.encode!(task_actions)
   end
 end

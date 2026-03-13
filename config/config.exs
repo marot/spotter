@@ -77,8 +77,12 @@ config :spark,
     ]
   ]
 
-config :claude_agent_sdk,
-  task_supervisor: Spotter.ClaudeTaskSupervisor
+# Sentry error tracking
+config :sentry,
+  client: Sentry.ReqHTTPClient,
+  environment_name: Mix.env(),
+  enable_source_code_context: true,
+  root_source_code_paths: [File.cwd!()]
 
 config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
 

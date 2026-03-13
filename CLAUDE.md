@@ -1,12 +1,18 @@
 # Product
 Spotter helps to review Claude Code sessions and generated code. 
 
-# Architecture
-Ash, Phoenix, LiveView, xterm.js, tmux
+# Local Runtime (just)
 
-The prototype runs on localhost, and has no authentication.
+Use `just` recipes from the repository root for day-to-day local runtime control:
 
-This project is greenfield. No legacy fallbacks, backwards compatability or similar is needed.
+- `just up` - Ensure OTEL stack + start Dolt + Phoenix. Idempotent: keeps healthy services running; if Phoenix is unhealthy, tries graceful process restart first, then falls back to full Overmind recycle.
+- `just status` - Service health snapshot for Phoenix, Dolt, and Jaeger.
+- `just logs` - Stream Overmind output.
+- `just down` - Stop Phoenix/Overmind and Dolt.
+- `just reset` - `down` + wipe Dolt volumes + clean `up`.
+- `just otel-up` / `just otel-down` - Start/stop OTEL stack (delegates to shared workspace stack when available).
+- `just otel-restart` / `just otel-status` - Restart and inspect OTEL stack health.
+- `just test-smoke` - Run runtime smoke tests.
 
 # Worktrees
 
@@ -62,114 +68,17 @@ Add manual spans where instrumentation is not automatic (Bandit/Phoenix/Ash cove
 - Record failures with `OpenTelemetry.Tracer.set_status(:error, reason)` (or `SpotterWeb.OtelTraceHelpers.set_error/2` where applicable).
 - Hook endpoints should set `x-spotter-trace-id` via `SpotterWeb.OtelTraceHelpers.put_trace_response_header/1`.
 
-# Agent Patterns
-
-Standard patterns for all Claude/agent integrations in Spotter. Follow these conventions when adding or modifying agent code.
-
-## 1) Single-turn (no tools) via ClaudeCode.Client
-
-Use `Spotter.Services.ClaudeCode.Client.query_text/3` or `query_json_schema/4` for single-turn prompts with no tool use.
-
-**Required:**
-
-- Wrap calls in `OpenTelemetry.Tracer.with_span/2`
-- Set span attributes: `spotter.model_requested`, `spotter.timeout_ms`, `spotter.input_bytes`
-- Use explicit `timeout_ms` option (never rely on default in production workers)
-
-**Reference:** `lib/spotter/services/claude_code/client.ex`
-
-```elixir
-Tracer.with_span "spotter.my_feature.query" do
-  Tracer.set_attribute("spotter.model_requested", model)
-  Tracer.set_attribute("spotter.timeout_ms", timeout_ms)
-
-  Client.query_json_schema(system_prompt, user_prompt, schema,
-    model: model,
-    timeout_ms: timeout_ms
-  )
-end
-```
-
-## 2) Tool-loop agent via Claude Agent SDK + MCP server
-
-Use for multi-turn agents that need to call tools (spec agent, test agent, hotspot agent).
-
-**Required SDK options:**
-
-```elixir
-%ClaudeAgentSDK.Options{
-  tools: [],                              # no built-in tools
-  allowed_tools: allowed_tools,           # explicit allowlist
-  permission_mode: :dont_ask,             # no interactive prompts
-  max_turns: @max_turns,                  # explicit int
-  mcp_servers: %{"server-name" => server} # in-process MCP server
-}
-```
-
-**Required observability:**
-
-- Use `ClaudeAgentFlow.build_opts/1` to inject `TRACEPARENT` env and enable streaming
-- Wrap the SDK stream with `ClaudeAgentFlow.wrap_stream/2` with `flow_keys`:
-  - `FlowKeys.project(project_id)` when available
-  - `FlowKeys.commit(commit_hash)` when available
-
-**Required tool security:**
-
-- Process-dictionary-bound scope (e.g. `ToolHelpers.set_project_id/1`) — never trust model-supplied scope parameters
-- Clean up process dictionary in `after` block
-- Referential integrity checks on foreign keys before writes
-
-**Reference:** `lib/spotter/product_spec/agent/runner.ex`
-
-```elixir
-ToolHelpers.set_project_id(to_string(input.project_id))
-ToolHelpers.set_commit_hash(input.commit_hash)
-
-try do
-  base_opts = %ClaudeAgentSDK.Options{
-    mcp_servers: %{"spec-tools" => server},
-    allowed_tools: allowed_tools,
-    max_turns: @max_turns
-  }
-
-  opts = ClaudeAgentFlow.build_opts(base_opts)
-
-  system_prompt
-  |> ClaudeAgentSDK.query(opts)
-  |> ClaudeAgentFlow.wrap_stream(flow_keys: flow_keys)
-  |> Enum.reduce(acc, &collect/2)
-after
-  ToolHelpers.set_project_id(nil)
-  ToolHelpers.set_commit_hash("")
-end
-```
-
-## 3) Oban worker timeouts for LLM/git
+# Oban Worker Timeouts
 
 Any Oban worker that calls git or LLM must implement `c:timeout/1`.
 
-**Rules:**
-
-- Worker `timeout/1` must be strictly greater than any internal `timeout_ms` passed to Claude Agent SDK
-- Recommended: worker timeout = SDK timeout + 30s buffer for setup/teardown
 - `Oban.Plugins.Lifeline` rescues orphaned `executing` jobs
 
-## 4) Git usage in agent-adjacent code
+# Git Usage
 
-- Never call `System.cmd("git", ...)` directly in agent-adjacent code
+- Never call `System.cmd("git", ...)` directly
 - Use `Spotter.Services.GitRunner` (Port-based, timeout-safe) when available
 - All repo content used for analysis must be read at the analyzed commit (git-backed), not from the working tree
-
-## 5) Canonical span naming
-
-| Domain | Prefix | Example |
-|---|---|---|
-| Hotspot analysis | `spotter.commit_hotspots.*` | `spotter.commit_hotspots.agent.run` |
-| Test sync | `spotter.commit_tests.*` | `spotter.commit_tests.agent.run_file` |
-| Product spec | `spotter.product_spec.*` | `spotter.product_spec.invoke_agent` |
-| Claude queries | `spotter.claude_code.*` | `spotter.claude_code.query` |
-| Git operations | `spotter.git.*` | `spotter.git.run` |
-| File detail | `spotter.file_detail.*` | `spotter.file_detail.load_file_content` |
 
 # Agent Instructions
 
@@ -220,3 +129,90 @@ Cleanup tmux session: tmux kill-session -t spotter-NAME
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+<!-- BEGIN BEADS INTEGRATION -->
+## Issue Tracking with bd (beads)
+
+**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+
+### Why bd?
+
+- Dependency-aware: Track blockers and relationships between issues
+- Git-friendly: Auto-syncs to JSONL for version control
+- Agent-optimized: JSON output, ready work detection, discovered-from links
+- Prevents duplicate tracking systems and confusion
+
+### Quick Start
+
+**Check for ready work:**
+
+```bash
+bd ready --json
+```
+
+**Create new issues:**
+
+```bash
+bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+```
+
+**Claim and update:**
+
+```bash
+bd update bd-42 --status in_progress --json
+bd update bd-42 --priority 1 --json
+```
+
+**Complete work:**
+
+```bash
+bd close bd-42 --reason "Completed" --json
+```
+
+### Issue Types
+
+- `bug` - Something broken
+- `feature` - New functionality
+- `task` - Work item (tests, docs, refactoring)
+- `epic` - Large feature with subtasks
+- `chore` - Maintenance (dependencies, tooling)
+
+### Priorities
+
+- `0` - Critical (security, data loss, broken builds)
+- `1` - High (major features, important bugs)
+- `2` - Medium (default, nice-to-have)
+- `3` - Low (polish, optimization)
+- `4` - Backlog (future ideas)
+
+### Workflow for AI Agents
+
+1. **Check ready work**: `bd ready` shows unblocked issues
+2. **Claim your task**: `bd update <id> --status in_progress`
+3. **Work on it**: Implement, test, document
+4. **Discover new work?** Create linked issue:
+   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
+5. **Complete**: `bd close <id> --reason "Done"`
+
+### Auto-Sync
+
+bd automatically syncs with git:
+
+- Exports to `.beads/issues.jsonl` after changes (5s debounce)
+- Imports from JSONL when newer (e.g., after `git pull`)
+- No manual export/import needed!
+
+### Important Rules
+
+- ✅ Use bd for ALL task tracking
+- ✅ Always use `--json` flag for programmatic use
+- ✅ Link discovered work with `discovered-from` dependencies
+- ✅ Check `bd ready` before asking "what should I work on?"
+- ❌ Do NOT create markdown TODO lists
+- ❌ Do NOT use external issue trackers
+- ❌ Do NOT duplicate tracking systems
+
+For more details, see README.md and docs/QUICKSTART.md.
+
+<!-- END BEADS INTEGRATION -->

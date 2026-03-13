@@ -30,25 +30,28 @@ defmodule SpotterWeb.Router do
     post("/hooks/file-snapshot", HooksController, :file_snapshot)
     post("/hooks/tool-call", HooksController, :tool_call)
     post("/hooks/commit-event", HooksController, :commit_event)
+    post("/hooks/raw-event", HooksController, :raw_event)
     post("/hooks/waiting-summary", SessionHookController, :waiting_summary)
   end
 
   scope "/", SpotterWeb do
     pipe_through(:browser)
 
-    live("/", PaneListLive)
+    live("/", DashboardLive)
     live("/history", HistoryLive)
     live("/history/commits/:commit_id", CommitDetailLive)
     live("/reviews", ReviewsLive)
+    live("/retros", RetrosLive)
+    live("/sessions", SessionsLive)
     live("/sessions/:session_id", SessionLive)
     live("/sessions/:session_id/agents/:agent_id", SubagentLive)
     live("/file-metrics", FileMetricsLive)
-    live("/flows", FlowsLive)
-    live("/specs", SpecsLive)
-    live("/patterns/:pattern_id", PromptPatternDetailLive)
-    live("/settings/config", ConfigLive)
+    live("/telemetry/commands", ShellTelemetryLive)
+    live("/telemetry/instructions", InstructionsTelemetryLive)
     get("/projects/:project_id/review", ReviewsRedirectController, :show)
     live("/projects/:project_id/file-metrics", FileMetricsLive)
+    live("/projects/:project_id/telemetry/commands", ShellTelemetryLive)
+    live("/projects/:project_id/telemetry/instructions", InstructionsTelemetryLive)
     live("/projects/:project_id/files/*relative_path", FileDetailLive)
   end
 end

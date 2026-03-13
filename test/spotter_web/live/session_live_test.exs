@@ -1,31 +1,3 @@
-defmodule SpotterWeb.SessionLiveTest.FakeExplainAnnotations do
-  @moduledoc false
-
-  alias Spotter.Services.ExplainAnnotations
-  alias Spotter.Transcripts.Annotation
-
-  def enqueue(annotation_id) do
-    annotation = Ash.get!(Annotation, annotation_id)
-
-    metadata =
-      Map.merge(annotation.metadata || %{}, %{
-        "explain" => %{"status" => "complete", "answer" => "fast explanation result"}
-      })
-
-    Ash.update!(annotation, %{metadata: metadata})
-
-    Phoenix.PubSub.broadcast!(
-      Spotter.PubSub,
-      ExplainAnnotations.topic(annotation_id),
-      {:annotation_explain_done, annotation_id, "fast explanation result", []}
-    )
-
-    {:ok, :fake_job}
-  end
-
-  def topic(annotation_id), do: ExplainAnnotations.topic(annotation_id)
-end
-
 defmodule SpotterWeb.SessionLiveTest do
   use ExUnit.Case, async: false
 
@@ -65,6 +37,53 @@ defmodule SpotterWeb.SessionLiveTest do
     }
 
     Ash.create!(Message, Map.merge(defaults, attrs))
+  end
+
+  describe "transcript-first layout" do
+    test "renders transcript and sidebar without terminal container", %{session_id: session_id} do
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ ~s(data-testid="session-root")
+      assert html =~ ~s(data-testid="transcript-container")
+      assert html =~ "session-transcript"
+      assert html =~ "session-sidebar"
+      refute html =~ "session-terminal"
+      refute html =~ "terminal-container"
+      refute html =~ "terminal-connecting"
+      refute html =~ ~s(phx-hook="Terminal")
+      refute html =~ ~s(phx-hook="TranscriptTaskRail")
+    end
+
+    test "renders task rail when TodoWrite actions are present", %{
+      session: session,
+      session_id: session_id
+    } do
+      create_message(session, %{
+        content: %{
+          "blocks" => [
+            %{
+              "type" => "tool_use",
+              "name" => "TodoWrite",
+              "id" => "toolu_todo_rail",
+              "input" => %{
+                "todos" => [
+                  %{"id" => "todo-1", "content" => "Investigate", "status" => "completed"},
+                  %{"id" => "todo-2", "content" => "Implement", "status" => "in_progress"}
+                ]
+              }
+            }
+          ]
+        }
+      })
+
+      {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
+
+      assert html =~ ~s(phx-hook="TranscriptTaskRail")
+      assert html =~ ~s(data-testid="transcript-task-rail")
+      assert html =~ ~s(data-marker-id="tool-use:toolu_todo_rail")
+      assert html =~ ~s(data-task-actions=)
+      assert html =~ "tool-use:toolu_todo_rail"
+    end
   end
 
   describe "transcript row class mapping" do
@@ -422,52 +441,6 @@ defmodule SpotterWeb.SessionLiveTest do
     end
   end
 
-  describe "explain subscribe-before-enqueue race" do
-    test "fast explain job result is not missed (subscribe before enqueue)", %{
-      session: session,
-      session_id: session_id
-    } do
-      Application.put_env(
-        :spotter,
-        :explain_annotations_module,
-        SpotterWeb.SessionLiveTest.FakeExplainAnnotations
-      )
-
-      on_exit(fn ->
-        Application.delete_env(:spotter, :explain_annotations_module)
-      end)
-
-      create_message(session, %{
-        content: %{"blocks" => [%{"type" => "text", "text" => "Hello world"}]}
-      })
-
-      {:ok, view, _html} = live(build_conn(), "/sessions/#{session_id}")
-
-      # Select text to enable annotation editor
-      render_hook(view, "transcript_text_selected", %{
-        "text" => "Hello world",
-        "message_ids" => []
-      })
-
-      # Switch to annotations tab to see the editor
-      render_click(view, "switch_sidebar_tab", %{"tab" => "annotations"})
-
-      # Submit annotation with purpose=explain
-      view
-      |> form(".annotation-form form", %{"comment" => "explain this", "purpose" => "explain"})
-      |> render_submit()
-
-      # The done broadcast was queued during enqueue (inside handle_event).
-      # render/1 forces the view to process pending mailbox messages first.
-      html = render(view)
-
-      # The done event should have been received (subscribe happened before enqueue).
-      # The UI should show the final answer, not be stuck on "Explaining..."
-      assert html =~ "fast explanation result"
-      refute html =~ "Explaining..."
-    end
-  end
-
   describe "errors not in transcript header" do
     test "errors are not rendered as transcript header blocks", %{session_id: session_id} do
       {:ok, _view, html} = live(build_conn(), "/sessions/#{session_id}")
@@ -477,35 +450,6 @@ defmodule SpotterWeb.SessionLiveTest do
   end
 
   describe "PubSub live updates" do
-    test "session_activity updates status badge", %{session_id: session_id} do
-      {:ok, view, html} = live(build_conn(), "/sessions/#{session_id}")
-
-      refute html =~ "session-status-active"
-
-      Phoenix.PubSub.broadcast!(
-        Spotter.PubSub,
-        "session_activity",
-        {:session_activity, %{session_id: session_id, status: :active}}
-      )
-
-      html = render(view)
-      assert html =~ "session-status-active"
-      assert html =~ "active"
-    end
-
-    test "session_activity ignores other sessions", %{session_id: session_id} do
-      {:ok, view, _html} = live(build_conn(), "/sessions/#{session_id}")
-
-      Phoenix.PubSub.broadcast!(
-        Spotter.PubSub,
-        "session_activity",
-        {:session_activity, %{session_id: "other-session", status: :active}}
-      )
-
-      html = render(view)
-      refute html =~ "session-status-active"
-    end
-
     test "transcript_updated reloads messages", %{
       session: session,
       session_id: session_id

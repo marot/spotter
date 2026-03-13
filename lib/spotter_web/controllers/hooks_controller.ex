@@ -5,16 +5,17 @@ defmodule SpotterWeb.HooksController do
   alias Spotter.Observability.ErrorReport
   alias Spotter.Observability.FlowHub
   alias Spotter.Observability.FlowKeys
-  alias Spotter.ProductSpec.Jobs.UpdateRollingSpec
-  alias Spotter.Services.ActiveSessionRegistry
+  alias Spotter.Services.InstructionsLoadedExtractor
+  alias Spotter.Services.SessionEndFinalizer
+  alias Spotter.Services.ShellCommandExtractor
+  alias Spotter.Services.SubagentLifecycleIngestor
   alias Spotter.Telemetry.TraceContext
   alias Spotter.Transcripts.Commit
   alias Spotter.Transcripts.FileSnapshot
-  alias Spotter.Transcripts.Jobs.AnalyzeCommitHotspots
-  alias Spotter.Transcripts.Jobs.AnalyzeCommitTests
   alias Spotter.Transcripts.Jobs.ComputeCoChange
   alias Spotter.Transcripts.Jobs.ComputeHeatmap
   alias Spotter.Transcripts.Jobs.EnrichCommits
+  alias Spotter.Transcripts.RawHookEvent
   alias Spotter.Transcripts.Session
   alias Spotter.Transcripts.SessionCommitLink
   alias Spotter.Transcripts.Sessions
@@ -22,10 +23,14 @@ defmodule SpotterWeb.HooksController do
   alias SpotterWeb.OtelTraceHelpers
 
   require Ash.Query
+  require Logger
   require SpotterWeb.OtelTraceHelpers
 
   @max_commit_hashes 50
   @hash_pattern ~r/\A[0-9a-fA-F]{40}\z/
+  @max_field_size 10_240
+  @preserved_keys ~w(session_id tool_use_id file_path transcript_path cwd hook_event_name tool_name error agent_id agent_type)
+  @max_truncation_depth 10
 
   def commit_event(conn, %{"session_id" => session_id, "new_commit_hashes" => hashes} = params)
       when is_binary(session_id) and is_list(hashes) do
@@ -48,17 +53,12 @@ defmodule SpotterWeb.HooksController do
         "hook_script" => hook_script
       })
 
-      ActiveSessionRegistry.touch(session_id, :commit_event)
-
       with :ok <- validate_hashes(hashes),
            {:ok, session} <- find_session(session_id) do
         evidence = build_evidence(params)
         ingested = ingest_commits(hashes, session, params["git_branch"], evidence)
         enqueue_enrichment(hashes, session)
         enqueue_heatmap(session)
-        enqueue_analyze_hotspots(hashes, session)
-        enqueue_analyze_tests(hashes, session)
-        enqueue_rolling_spec(hashes, session)
 
         emit_hook_outcome("commit_event", :ok, flow_keys)
 
@@ -196,8 +196,6 @@ defmodule SpotterWeb.HooksController do
         "hook_script" => hook_script
       })
 
-      ActiveSessionRegistry.touch(session_id, :file_snapshot)
-
       with {:ok, session} <- find_session(session_id),
            {:ok, attrs} <- build_attrs(params, session),
            {:ok, _snapshot} <- Ash.create(FileSnapshot, attrs) do
@@ -311,6 +309,51 @@ defmodule SpotterWeb.HooksController do
     end
   end
 
+  def raw_event(conn, %{"hook_payload" => hook_payload, "env" => env} = params)
+      when is_map(hook_payload) and is_map(env) do
+    meta = raw_event_meta(conn, hook_payload)
+
+    OtelTraceHelpers.with_span "spotter.hook.raw_event", meta.span_attrs do
+      emit_hook_received("raw_event", meta.flow_keys, meta.received_payload)
+
+      handle_raw_event_result(
+        conn,
+        meta,
+        hook_payload,
+        persist_raw_event(hook_payload, env, params["captured_at"])
+      )
+    end
+  end
+
+  def raw_event(conn, _params) do
+    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "unknown"
+    hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
+
+    OtelTraceHelpers.with_span "spotter.hook.raw_event", %{} do
+      error_payload =
+        ErrorReport.hook_flow_error(
+          "invalid_params",
+          "hook_payload and env are required",
+          400,
+          hook_event,
+          hook_script,
+          %{"reason" => "hook_payload and env are required"}
+        )
+
+      OtelTraceHelpers.set_error("invalid_params", %{
+        "http.status_code" => 400,
+        "error.source" => "hooks_controller"
+      })
+
+      emit_hook_outcome("raw_event", :error, [FlowKeys.system()], error_payload)
+
+      conn
+      |> put_status(:bad_request)
+      |> OtelTraceHelpers.put_trace_response_header()
+      |> json(%{error: "hook_payload and env are required"})
+    end
+  end
+
   def tool_call(conn, %{"session_id" => session_id} = params)
       when is_binary(session_id) do
     hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "PostToolUse"
@@ -331,8 +374,6 @@ defmodule SpotterWeb.HooksController do
         "hook_event" => hook_event,
         "hook_script" => hook_script
       })
-
-      ActiveSessionRegistry.touch(session_id, :tool_call)
 
       with {:ok, session} <- Sessions.find_or_create(session_id),
            {:ok, _tool_call} <- create_tool_call(session, params) do
@@ -542,45 +583,6 @@ defmodule SpotterWeb.HooksController do
     })
   end
 
-  defp enqueue_analyze_hotspots(hashes, session) when hashes != [] do
-    Enum.each(hashes, fn hash ->
-      insert_and_emit(
-        %{project_id: session.project_id, commit_hash: hash},
-        AnalyzeCommitHotspots,
-        %{"project_id" => session.project_id, "commit_hash" => hash}
-      )
-    end)
-  end
-
-  defp enqueue_analyze_hotspots(_, _), do: :ok
-
-  defp enqueue_analyze_tests(hashes, session) when hashes != [] do
-    Enum.each(hashes, fn hash ->
-      insert_and_emit(
-        %{project_id: session.project_id, commit_hash: hash},
-        AnalyzeCommitTests,
-        %{"project_id" => session.project_id, "commit_hash" => hash}
-      )
-    end)
-  end
-
-  defp enqueue_analyze_tests(_, _), do: :ok
-
-  defp enqueue_rolling_spec(hashes, session) when hashes != [] do
-    Enum.each(hashes, fn hash ->
-      args =
-        %{project_id: session.project_id, commit_hash: hash, git_cwd: session.cwd || "."}
-        |> OtelTraceHelpers.maybe_add_trace_context()
-
-      insert_and_emit(args, UpdateRollingSpec, %{
-        "project_id" => session.project_id,
-        "commit_hash" => hash
-      })
-    end)
-  end
-
-  defp enqueue_rolling_spec(_, _), do: :ok
-
   defp enqueue_enrichment(hashes, session) when hashes != [] do
     args =
       %{
@@ -732,5 +734,274 @@ defmodule SpotterWeb.HooksController do
       {:ok, _tool_call} -> {:ok, nil}
       {:error, changeset} -> {:error, :validation_error, changeset}
     end
+  end
+
+  # --- Raw event helpers ---
+
+  defp raw_event_meta(conn, hook_payload) do
+    session_id = hook_payload["session_id"]
+    hook_event_name = hook_payload["hook_event_name"]
+    tool_name = hook_payload["tool_name"]
+    hook_event = get_req_header(conn, "x-spotter-hook-event") |> List.first() || "unknown"
+    hook_script = get_req_header(conn, "x-spotter-hook-script") |> List.first() || "unknown"
+
+    %{
+      hook_event: hook_event,
+      hook_script: hook_script,
+      flow_keys: if(session_id, do: [FlowKeys.session(session_id)], else: [FlowKeys.system()]),
+      span_attrs: %{
+        "spotter.session_id" => session_id || "unknown",
+        "spotter.hook_event_name" => hook_event_name || "unknown",
+        "spotter.tool_name" => tool_name || "unknown",
+        "spotter.hook.event" => hook_event,
+        "spotter.hook.script" => hook_script
+      },
+      received_payload: %{
+        "session_id" => session_id,
+        "hook_event_name" => hook_event_name,
+        "tool_name" => tool_name,
+        "hook_event" => hook_event,
+        "hook_script" => hook_script
+      }
+    }
+  end
+
+  defp handle_raw_event_result(conn, meta, hook_payload, {:ok, event}) do
+    maybe_finalize_session_end(hook_payload)
+    maybe_extract_shell_commands(hook_payload, event)
+    maybe_extract_instructions_loaded(hook_payload, event)
+    maybe_ingest_subagent_lifecycle(hook_payload, event)
+    emit_hook_outcome("raw_event", :ok, meta.flow_keys)
+
+    conn
+    |> put_status(:created)
+    |> OtelTraceHelpers.put_trace_response_header()
+    |> json(%{ok: true})
+  end
+
+  defp handle_raw_event_result(conn, meta, _hook_payload, {:error, changeset}) do
+    respond_raw_event_error(
+      conn,
+      meta,
+      "validation_error",
+      inspect(changeset),
+      :unprocessable_entity,
+      422
+    )
+  end
+
+  defp respond_raw_event_error(conn, meta, error_type, message, http_status, status_code) do
+    error_payload =
+      ErrorReport.hook_flow_error(
+        error_type,
+        message,
+        status_code,
+        meta.hook_event,
+        meta.hook_script,
+        %{
+          "reason" => message
+        }
+      )
+
+    OtelTraceHelpers.set_error(error_type, %{
+      "http.status_code" => status_code,
+      "error.source" => "hooks_controller"
+    })
+
+    emit_hook_outcome("raw_event", :error, meta.flow_keys, error_payload)
+
+    conn
+    |> put_status(http_status)
+    |> OtelTraceHelpers.put_trace_response_header()
+    |> json(%{error: message})
+  end
+
+  defp maybe_extract_shell_commands(hook_payload, event) do
+    OtelTraceHelpers.with_span "spotter.shell_telemetry.ingest", %{
+      "spotter.session_id" => hook_payload["session_id"] || "unknown",
+      "spotter.tool_use_id" => hook_payload["tool_use_id"] || "unknown",
+      "spotter.hook.event" => hook_payload["hook_event_name"] || "unknown"
+    } do
+      case ShellCommandExtractor.extract_and_persist(hook_payload, to_string(event.id)) do
+        {:ok, count, project_id} ->
+          OpenTelemetry.Tracer.set_attribute("spotter.shell_command.count", count)
+
+          if project_id do
+            OpenTelemetry.Tracer.set_attribute("spotter.project_id", project_id)
+            broadcast_shell_telemetry(project_id)
+          end
+
+        {:error, reason} ->
+          OtelTraceHelpers.set_error("shell_telemetry_ingest_failed", %{
+            "error.details" => inspect(reason)
+          })
+      end
+    end
+  rescue
+    error ->
+      Logger.warning("Shell command extraction failed: #{Exception.message(error)}")
+      :ok
+  end
+
+  defp broadcast_shell_telemetry(project_id) do
+    Phoenix.PubSub.broadcast(
+      Spotter.PubSub,
+      SpotterWeb.ShellTelemetryLive.telemetry_topic(project_id),
+      {:shell_telemetry_updated, %{project_id: project_id}}
+    )
+  rescue
+    error ->
+      Logger.warning("Shell telemetry broadcast failed: #{Exception.message(error)}")
+      :ok
+  end
+
+  defp maybe_extract_instructions_loaded(hook_payload, event) do
+    OtelTraceHelpers.with_span "spotter.instructions_telemetry.ingest", %{
+      "spotter.session_id" => hook_payload["session_id"] || "unknown",
+      "spotter.hook.event" => hook_payload["hook_event_name"] || "unknown"
+    } do
+      case InstructionsLoadedExtractor.extract_and_persist(hook_payload, to_string(event.id)) do
+        {:ok, project_id} when is_binary(project_id) ->
+          OpenTelemetry.Tracer.set_attribute("spotter.project_id", project_id)
+
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          OtelTraceHelpers.set_error("instructions_telemetry_ingest_failed", %{
+            "error.details" => inspect(reason)
+          })
+      end
+    end
+  rescue
+    error ->
+      Logger.warning("Instructions loaded extraction failed: #{Exception.message(error)}")
+      :ok
+  end
+
+  defp maybe_ingest_subagent_lifecycle(hook_payload, event) do
+    OtelTraceHelpers.with_span "spotter.subagent_lifecycle.ingest", %{
+      "spotter.session_id" => hook_payload["session_id"] || "unknown",
+      "spotter.agent_id" => hook_payload["agent_id"] || "unknown",
+      "spotter.hook.event" => hook_payload["hook_event_name"] || "unknown"
+    } do
+      case SubagentLifecycleIngestor.ingest(hook_payload, event) do
+        {:ok, %{status: status}} ->
+          OpenTelemetry.Tracer.set_attribute(
+            "spotter.subagent_lifecycle.status",
+            to_string(status)
+          )
+
+        {:error, reason} ->
+          OtelTraceHelpers.set_error("subagent_lifecycle_ingest_failed", %{
+            "error.details" => inspect(reason)
+          })
+      end
+    end
+  rescue
+    error ->
+      Logger.warning("Subagent lifecycle ingest failed: #{Exception.message(error)}")
+      :ok
+  end
+
+  defp maybe_finalize_session_end(
+         %{"hook_event_name" => "SessionEnd", "session_id" => session_id} = payload
+       )
+       when is_binary(session_id) do
+    trace_ctx = OtelTraceHelpers.maybe_add_trace_context(%{})
+    SessionEndFinalizer.finalize(session_id, payload, trace_context: trace_ctx)
+    :ok
+  rescue
+    error ->
+      Logger.warning(
+        "Failed to process SessionEnd raw event for #{session_id}: #{Exception.message(error)}"
+      )
+
+      :ok
+  end
+
+  defp maybe_finalize_session_end(_payload), do: :ok
+
+  defp persist_raw_event(hook_payload, env, raw_captured_at) do
+    session_id = hook_payload["session_id"]
+    captured_at = parse_captured_at(raw_captured_at)
+
+    effective_session_id =
+      if is_nil(session_id) or session_id == "" do
+        synthetic_session_id(hook_payload, captured_at)
+      else
+        session_id
+      end
+
+    is_synthetic = effective_session_id != session_id
+
+    if is_synthetic do
+      OpenTelemetry.Tracer.set_attribute("spotter.raw_event.synthetic_session_id", true)
+    end
+
+    attrs = %{
+      session_id: effective_session_id,
+      hook_event_name: hook_payload["hook_event_name"] || "unknown",
+      tool_name: hook_payload["tool_name"],
+      tool_use_id: hook_payload["tool_use_id"],
+      hook_payload: truncate_large_strings(hook_payload, @max_field_size, 0),
+      env: normalize_env(env),
+      captured_at: captured_at
+    }
+
+    Ash.create(RawHookEvent, attrs, action: :upsert)
+  end
+
+  defp synthetic_session_id(hook_payload, captured_at) do
+    hook_event = hook_payload["hook_event_name"] || "unknown"
+    ts = DateTime.to_iso8601(captured_at)
+    hash = :crypto.hash(:sha256, "#{hook_event}:#{ts}") |> Base.encode16(case: :lower)
+    "synthetic-#{String.slice(hash, 0, 16)}"
+  end
+
+  defp parse_captured_at(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _offset} -> dt
+      {:error, _} -> DateTime.utc_now()
+    end
+  end
+
+  defp parse_captured_at(_), do: DateTime.utc_now()
+
+  defp truncate_large_strings(map, max_size, depth)
+       when is_map(map) and depth < @max_truncation_depth do
+    Map.new(map, fn {k, v} -> {k, truncate_field(k, v, max_size, depth)} end)
+  end
+
+  defp truncate_large_strings(value, _max_size, _depth), do: value
+
+  defp truncate_field(key, value, _max_size, _depth) when key in @preserved_keys, do: value
+
+  defp truncate_field(_key, value, max_size, _depth)
+       when is_binary(value) and byte_size(value) > max_size do
+    String.slice(value, 0, max_size) <> "[truncated]"
+  end
+
+  defp truncate_field(_key, value, max_size, depth) when is_map(value) do
+    truncate_large_strings(value, max_size, depth + 1)
+  end
+
+  defp truncate_field(_key, value, max_size, depth) when is_list(value) do
+    Enum.map(value, fn
+      item when is_map(item) ->
+        truncate_large_strings(item, max_size, depth + 1)
+
+      item when is_binary(item) and byte_size(item) > max_size ->
+        String.slice(item, 0, max_size) <> "[truncated]"
+
+      item ->
+        item
+    end)
+  end
+
+  defp truncate_field(_key, value, _max_size, _depth), do: value
+
+  defp normalize_env(env) when is_map(env) do
+    Map.new(env, fn {k, v} -> {to_string(k), to_string(v)} end)
   end
 end

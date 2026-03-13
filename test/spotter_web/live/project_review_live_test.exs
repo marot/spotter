@@ -13,6 +13,13 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
   setup do
     :ok = Sandbox.checkout(Repo)
     Sandbox.mode(Repo, {:shared, self()})
+
+    # Clean pre-existing data so tests don't depend on empty DB
+    Repo.query!("DELETE FROM annotations")
+    Repo.query!("DELETE FROM sessions")
+    Repo.query!("DELETE FROM projects")
+
+    :ok
   end
 
   defp create_project_with_session do
@@ -67,7 +74,7 @@ defmodule SpotterWeb.ProjectReviewLiveTest do
       assert html =~ "Reviews"
       assert html =~ "important code"
       assert html =~ "needs review"
-      assert html =~ "Terminal"
+      assert html =~ "Transcript"
     end
 
     test "renders transcript annotation with message ref count" do

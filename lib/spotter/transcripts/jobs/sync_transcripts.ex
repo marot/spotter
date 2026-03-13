@@ -8,15 +8,19 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
   require Logger
   require OpenTelemetry.Tracer, as: Tracer
 
+  alias Spotter.Config.Runtime
   alias Spotter.Observability.ErrorReport
   alias Spotter.Search.Jobs.ReindexProject
   alias Spotter.Transcripts.Config
   alias Spotter.Transcripts.Jobs.ComputeCoChange
   alias Spotter.Transcripts.Jobs.ComputeHeatmap
+  alias Spotter.Transcripts.Jobs.ComputeLanes
   alias Spotter.Transcripts.JsonlParser
   alias Spotter.Transcripts.Session
   alias Spotter.Transcripts.Sessions
   alias Spotter.Transcripts.SessionsIndex
+  alias Spotter.Transcripts.Team
+  alias Spotter.Transcripts.TeamMember
 
   require Ash.Query
 
@@ -36,8 +40,13 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       Tracer.set_attribute("spotter.session_id", session_id)
       set_trace_context_attributes(Keyword.get(opts, :trace_context, %{}))
 
-      case find_transcript_file(session_id) do
+      transcript_path = Keyword.get(opts, :transcript_path)
+      transcript_roots = Keyword.get(opts, :transcript_roots)
+
+      case find_transcript_file(session_id, transcript_path, transcript_roots) do
         {:ok, file_path} ->
+          source = if file_path == transcript_path, do: "direct", else: "root_search"
+          Tracer.set_attribute("spotter.transcript_path.source", source)
           sync_session_file(file_path, opts)
 
         :not_found ->
@@ -98,20 +107,11 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
           index_meta = Map.get(index, parsed.session_id, %{})
 
           # Ensure session and project exist
-          session_record =
-            case Session
-                 |> Ash.Query.filter(session_id == ^parsed.session_id)
-                 |> Ash.read_one!() do
-              %Session{} = existing ->
-                existing
-
-              nil ->
-                {:ok, stub} = Sessions.find_or_create(parsed.session_id, cwd: parsed.cwd)
-                stub
-            end
+          session_record = find_or_create_session!(parsed)
 
           # Upsert session with full metadata + transcript_dir backfill
           session = upsert_existing_session!(session_record, transcript_dir, parsed, index_meta)
+          link_team_membership!(session, parsed)
           subagent_type_by_agent_id = build_subagent_type_index(parsed.messages)
 
           ingested = upsert_messages!(session, parsed.messages)
@@ -167,8 +167,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       %{
         project_name: name,
         pattern: Regex.source(pattern),
-        transcripts_dir: config.transcripts_dir,
-        transcript_roots: transcript_search_roots(config.transcripts_dir),
+        transcript_roots: config.transcript_roots,
         run_id: run_id
       }
       |> __MODULE__.new()
@@ -183,8 +182,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
         args:
           %{
             "project_name" => name,
-            "pattern" => pattern_str,
-            "transcripts_dir" => transcripts_dir
+            "pattern" => pattern_str
           } = args
       }) do
     run_id = args["run_id"]
@@ -202,7 +200,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
         project = upsert_project!(name, pattern_str)
 
         # Find matching transcript directories
-        transcript_dirs = transcript_dirs_from_args(transcripts_dir, args)
+        transcript_dirs = transcript_dirs_from_args(args)
 
         dirs = list_matching_dirs(transcript_dirs, pattern)
         dirs_total = length(dirs)
@@ -287,6 +285,19 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
     %{project_id: project.id}
     |> ReindexProject.new()
     |> Oban.insert()
+
+    enqueue_lanes(project)
+  end
+
+  defp enqueue_lanes(project) do
+    Team
+    |> Ash.Query.filter(project_id == ^project.id)
+    |> Ash.read!()
+    |> Enum.each(fn team ->
+      %{team_id: team.id}
+      |> ComputeLanes.new()
+      |> Oban.insert()
+    end)
   end
 
   defp broadcast(message) do
@@ -337,30 +348,15 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
     end
   end
 
-  defp transcript_search_roots(configured_transcripts_dir) do
-    configured_roots =
-      if is_binary(configured_transcripts_dir) do
-        [configured_transcripts_dir]
-      else
-        []
-      end
+  defp transcript_dirs_from_args(args) do
+    case args do
+      %{"transcript_roots" => dirs} when is_list(dirs) ->
+        dirs |> Enum.filter(&is_binary/1) |> Enum.uniq()
 
-    (configured_roots ++ [Path.expand("~/.claude/projects")])
-    |> Enum.map(&Path.expand/1)
-    |> Enum.uniq()
-  end
-
-  defp transcript_dirs_from_args(transcripts_dir, args) do
-    from_args =
-      case args do
-        %{"transcript_roots" => dirs} when is_list(dirs) -> dirs
-        _ -> [transcripts_dir]
-      end
-      |> Enum.filter(&is_binary/1)
-      |> Enum.uniq()
-
-    (transcript_search_roots(List.first(from_args)) ++ from_args)
-    |> Enum.uniq()
+      _ ->
+        {roots, _source} = Runtime.transcript_roots()
+        roots
+    end
   end
 
   defp sync_directory(project, dir) do
@@ -400,6 +396,7 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       {:ok, parsed} ->
         index_meta = Map.get(index, parsed.session_id, %{})
         session = upsert_session!(project, transcript_dir, parsed, index_meta)
+        link_team_membership!(session, parsed)
         subagent_type_by_agent_id = build_subagent_type_index(parsed.messages)
         create_messages!(session, parsed.messages)
         create_tool_calls!(session, parsed.messages)
@@ -425,7 +422,9 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       summary: index_meta[:summary],
       first_prompt: index_meta[:first_prompt],
       source_created_at: index_meta[:source_created_at],
-      source_modified_at: index_meta[:source_modified_at]
+      source_modified_at: index_meta[:source_modified_at],
+      team_name: parsed.team_name,
+      agent_name: parsed.agent_name
     }
 
     case Spotter.Transcripts.Session
@@ -662,22 +661,46 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
     end
   end
 
-  defp find_transcript_file(session_id) do
-    config = Config.read!()
-    transcript_roots = transcript_search_roots(config.transcripts_dir)
+  defp find_transcript_file(session_id, transcript_path, transcript_roots_override) do
+    case resolve_transcript_path(transcript_path) do
+      {:ok, _} = found -> found
+      :skip -> search_transcript_roots(session_id, transcript_roots_override)
+    end
+  end
 
-    Enum.find_value(transcript_roots, :not_found, fn transcripts_dir ->
-      find_in_transcript_dir(transcripts_dir, session_id)
+  defp resolve_transcript_path(nil), do: :skip
+  defp resolve_transcript_path(""), do: :skip
+
+  defp resolve_transcript_path(path) when is_binary(path) do
+    expanded = Path.expand(path)
+
+    if File.exists?(expanded) do
+      {:ok, expanded}
+    else
+      Logger.debug("transcript_path hint not found on disk: #{expanded}")
+      :skip
+    end
+  end
+
+  defp search_transcript_roots(session_id, roots_override) do
+    roots =
+      case roots_override do
+        roots when is_list(roots) and roots != [] -> roots
+        _ -> Config.read!().transcript_roots
+      end
+
+    Enum.find_value(roots, :not_found, fn root ->
+      find_in_transcript_root(root, session_id)
     end)
   end
 
-  defp find_in_transcript_dir(transcripts_dir, session_id) do
-    file = Path.join(transcripts_dir, "#{session_id}.jsonl")
+  defp find_in_transcript_root(root, session_id) do
+    file = Path.join(root, "#{session_id}.jsonl")
 
     if File.exists?(file) do
       {:ok, file}
     else
-      transcripts_dir
+      root
       |> list_subdirectories()
       |> Enum.map(&Path.join(&1, "#{session_id}.jsonl"))
       |> Enum.find(&File.exists?/1)
@@ -715,7 +738,9 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
       summary: index_meta[:summary],
       first_prompt: index_meta[:first_prompt],
       source_created_at: index_meta[:source_created_at],
-      source_modified_at: index_meta[:source_modified_at]
+      source_modified_at: index_meta[:source_modified_at],
+      team_name: parsed.team_name,
+      agent_name: parsed.agent_name
     }
 
     update_attrs = apply_timestamp_fallbacks(base_attrs, session_record)
@@ -793,29 +818,99 @@ defmodule Spotter.Transcripts.Jobs.SyncTranscripts do
 
   defp extract_agent_progress_refs(_), do: []
 
+  defp find_or_create_session!(parsed) do
+    case Session |> Ash.Query.filter(session_id == ^parsed.session_id) |> Ash.read_one!() do
+      %Session{} = existing ->
+        existing
+
+      nil ->
+        case Sessions.find_or_create(parsed.session_id, cwd: parsed.cwd) do
+          {:ok, stub} -> stub
+          {:error, _} -> create_session_with_db_project!(parsed)
+        end
+    end
+  end
+
+  defp create_session_with_db_project!(parsed) do
+    project = find_project_by_cwd!(parsed.cwd)
+
+    Ash.create!(Session, %{
+      session_id: parsed.session_id,
+      project_id: project.id,
+      cwd: parsed.cwd
+    })
+  end
+
+  defp find_project_by_cwd!(cwd) when is_binary(cwd) do
+    dir_name = String.replace(cwd, "/", "-")
+    basename = Path.basename(cwd)
+
+    Spotter.Transcripts.Project
+    |> Ash.read!()
+    |> Enum.find(fn project ->
+      pattern = Regex.compile!(project.pattern)
+      Regex.match?(pattern, dir_name) or Regex.match?(pattern, basename)
+    end) || raise "No project matching cwd: #{cwd}"
+  end
+
+  defp link_team_membership!(session, parsed) do
+    with team_name when is_binary(team_name) <- parsed[:team_name],
+         project_id when is_binary(project_id) <- session.project_id do
+      team = Ash.create!(Team, %{name: team_name, project_id: project_id})
+
+      if is_binary(parsed[:agent_name]) do
+        Ash.create!(TeamMember, %{
+          agent_name: parsed[:agent_name],
+          team_id: team.id,
+          session_id: session.id
+        })
+      end
+    else
+      _ -> :ok
+    end
+  end
+
   defp upsert_subagent!(session, parsed, subagent_type) do
-    update_attrs = %{
-      slug: parsed.slug,
-      subagent_type: subagent_type,
-      started_at: parsed.started_at,
-      ended_at: parsed.ended_at,
-      message_count: length(parsed.messages)
-    }
+    parsed_message_count = length(parsed.messages)
 
     case Spotter.Transcripts.Subagent
          |> Ash.Query.filter(session_id == ^session.id and agent_id == ^parsed.agent_id)
          |> Ash.read!() do
-      [subagent] ->
-        Ash.update!(subagent, update_attrs)
+      [existing] ->
+        update_attrs = %{
+          slug: first_non_empty(parsed.slug, existing.slug),
+          subagent_type: first_non_empty(subagent_type, existing.subagent_type),
+          started_at: earliest_non_nil(existing.started_at, parsed.started_at),
+          ended_at: latest_non_nil(existing.ended_at, parsed.ended_at),
+          message_count: max(existing.message_count || 0, parsed_message_count)
+        }
+
+        Ash.update!(existing, update_attrs)
 
       [] ->
-        create_attrs =
-          Map.merge(update_attrs, %{
-            agent_id: parsed.agent_id,
-            session_id: session.id
-          })
+        create_attrs = %{
+          agent_id: parsed.agent_id,
+          session_id: session.id,
+          slug: parsed.slug,
+          subagent_type: subagent_type,
+          started_at: parsed.started_at,
+          ended_at: parsed.ended_at,
+          message_count: parsed_message_count
+        }
 
         Ash.create!(Spotter.Transcripts.Subagent, create_attrs)
     end
   end
+
+  defp first_non_empty(nil, existing), do: existing
+  defp first_non_empty("", existing), do: existing
+  defp first_non_empty(new, _existing), do: new
+
+  defp earliest_non_nil(nil, b), do: b
+  defp earliest_non_nil(a, nil), do: a
+  defp earliest_non_nil(a, b), do: if(DateTime.compare(a, b) in [:lt, :eq], do: a, else: b)
+
+  defp latest_non_nil(nil, b), do: b
+  defp latest_non_nil(a, nil), do: a
+  defp latest_non_nil(a, b), do: if(DateTime.compare(a, b) in [:gt, :eq], do: a, else: b)
 end

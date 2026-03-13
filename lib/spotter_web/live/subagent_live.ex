@@ -7,7 +7,7 @@ defmodule SpotterWeb.SubagentLive do
   import SpotterWeb.TranscriptComponents
   import SpotterWeb.AnnotationComponents
 
-  alias Spotter.Services.{ExplainAnnotations, ReviewUpdates, TranscriptFileLinks}
+  alias Spotter.Services.{ReviewUpdates, TranscriptFileLinks}
 
   alias Spotter.Transcripts.{
     Annotation,
@@ -177,33 +177,7 @@ defmodule SpotterWeb.SubagentLive do
      )}
   end
 
-  defp maybe_enqueue_explain(socket, annotation, :explain) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(
-        Spotter.PubSub,
-        ExplainAnnotations.topic(annotation.id)
-      )
-    end
-
-    streams = Map.put(socket.assigns.explain_streams, annotation.id, "")
-    socket = assign(socket, explain_streams: streams)
-
-    case explain_annotations_module().enqueue(annotation.id) do
-      {:ok, _job} ->
-        socket
-
-      {:error, _reason} ->
-        socket
-        |> assign(explain_streams: Map.delete(socket.assigns.explain_streams, annotation.id))
-        |> put_flash(:error, "Could not start explanation job.")
-    end
-  end
-
   defp maybe_enqueue_explain(socket, _annotation, _purpose), do: socket
-
-  defp explain_annotations_module do
-    Application.get_env(:spotter, :explain_annotations_module, ExplainAnnotations)
-  end
 
   defp resolve_file_link_context(session_record) do
     project_id = to_string(session_record.project_id)
@@ -284,10 +258,10 @@ defmodule SpotterWeb.SubagentLive do
         <span class="breadcrumb-sep">/</span>
         <span class="breadcrumb-current">Agent not found</span>
       </div>
-      <div class="terminal-connecting">
+      <div class="empty-state">
         <div>
-          <div class="terminal-connecting-title">Subagent not found</div>
-          <div class="terminal-connecting-subtitle">
+          <div class="empty-state-title">Subagent not found</div>
+          <div class="empty-state-subtitle">
             The requested subagent could not be found.
           </div>
         </div>

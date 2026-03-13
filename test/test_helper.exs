@@ -1,14 +1,9 @@
-if Application.get_env(:claude_agent_sdk, :use_mock, false) do
-  {:ok, _pid} = ClaudeAgentSDK.Mock.start_link()
-end
-
-# Exclude tests that spawn Claude CLI when:
-# - Running inside a Claude Code session (nested sessions crash)
-# - No SPOTTER_ANTHROPIC_API_KEY set (LLM calls will fail anyway)
+# Exclude tests that spawn Claude CLI when running inside a Claude Code session
+# (nested sessions crash).
 excludes = [:slow, :live_dolt, :live_api, :flaky]
 
 excludes =
-  if System.get_env("CLAUDECODE") || is_nil(System.get_env("SPOTTER_ANTHROPIC_API_KEY")) do
+  if System.get_env("CLAUDECODE") do
     [:spawns_claude | excludes]
   else
     excludes

@@ -69,10 +69,10 @@ defmodule SpotterWeb.CommitDetailLive do
             <span class="breadcrumb-sep">/</span>
             <span class="breadcrumb-current">Commit not found</span>
           </div>
-          <div class="terminal-connecting">
+          <div class="empty-state">
             <div>
-              <div class="terminal-connecting-title">Commit not found</div>
-              <div class="terminal-connecting-subtitle">
+              <div class="empty-state-title">Commit not found</div>
+              <div class="empty-state-subtitle">
                 The requested commit could not be found.
               </div>
             </div>
@@ -119,32 +119,6 @@ defmodule SpotterWeb.CommitDetailLive do
                       {length(@commit_detail_commit.changed_files)} files changed
                     </span>
                   </div>
-                </div>
-
-                <%!-- Project rollup summary --%>
-                <div class="commit-detail-summary-section">
-                  <div class="commit-detail-section-title">Project Rollup</div>
-                  <%= if @commit_detail_rolling_summary do %>
-                    <pre class="project-rollup">{@commit_detail_rolling_summary.summary_text}</pre>
-                    <div class="text-muted text-xs">
-                      Computed: {format_timestamp(@commit_detail_rolling_summary.computed_at)}
-                    </div>
-                  <% else %>
-                    <p class="text-muted text-sm">No rolling summary computed yet.</p>
-                  <% end %>
-                </div>
-
-                <%!-- Bucket summary --%>
-                <div class="commit-detail-summary-section">
-                  <div class="commit-detail-section-title">Bucket Summary</div>
-                  <%= if @commit_detail_period_summary do %>
-                    <pre class="bucket-summary">{@commit_detail_period_summary.summary_text}</pre>
-                    <div class="text-muted text-xs">
-                      {@commit_detail_period_summary.bucket_kind} starting {@commit_detail_period_summary.bucket_start_date}
-                    </div>
-                  <% else %>
-                    <p class="text-muted text-sm">No bucket summary computed yet.</p>
-                  <% end %>
                 </div>
 
                 <%!-- Changed files list --%>
